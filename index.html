@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polygon Visualizer - Material Design 3</title>
+    <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="header-content">
+                <div class="logo">
+                    <md-icon>polyline</md-icon>
+                    <h1>Polygon Studio</h1>
+                </div>
+                <p class="tagline">Professional polygon design & visualization</p>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <!-- Main Canvas Area - Left Side -->
+            <main class="canvas-section">
+                <div class="canvas-toolbar">
+                    <div class="canvas-info">
+                        <md-icon>category</md-icon>
+                        <span id="polygonCount">0 polygons</span>
+                    </div>
+                    <div class="canvas-status">
+                        <md-icon>touch_app</md-icon>
+                        <span id="selectedInfo">None selected</span>
+                    </div>
+                </div>
+                <div class="canvas-container">
+                    <canvas id="polygonCanvas"></canvas>
+                </div>
+            </main>
+
+            <!-- Sidebar Toolbar - Right Side -->
+            <aside class="sidebar-toolbar">
+                <div class="toolbar-section">
+                    <h3>Draw Tools</h3>
+                    <md-filled-button id="startDrawing" class="tool-button">
+                        <md-icon slot="icon">edit</md-icon>
+                        Draw from Points
+                    </md-filled-button>
+                    
+                    <md-filled-tonal-button id="completePolygon" class="tool-button" disabled>
+                        <md-icon slot="icon">check_circle</md-icon>
+                        Complete Polygon
+                    </md-filled-tonal-button>
+                    
+                    <md-outlined-button id="cancelDrawing" class="tool-button" disabled>
+                        <md-icon slot="icon">cancel</md-icon>
+                        Cancel Drawing
+                    </md-outlined-button>
+                    
+                    <div class="divider"></div>
+                    
+                    <md-outlined-button id="drawPolygon" class="tool-button">
+                        <md-icon slot="icon">draw</md-icon>
+                        Triangle
+                    </md-outlined-button>
+                    
+                    <md-outlined-button id="addRectangle" class="tool-button">
+                        <md-icon slot="icon">crop_square</md-icon>
+                        Rectangle
+                    </md-outlined-button>
+                    
+                    <md-outlined-button id="addHexagon" class="tool-button">
+                        <md-icon slot="icon">hexagon</md-icon>
+                        Hexagon
+                    </md-outlined-button>
+                    
+                    <md-outlined-button id="randomPolygon" class="tool-button">
+                        <md-icon slot="icon">shuffle</md-icon>
+                        Random
+                    </md-outlined-button>
+                </div>
+
+                <div class="toolbar-section">
+                    <h3>Customize</h3>
+                    <div class="color-picker">
+                        <label for="polygonColor">Fill Color</label>
+                        <input type="color" id="polygonColor" value="#6750A4">
+                    </div>
+                    
+                    <div class="color-picker">
+                        <label for="strokeColor">Stroke Color</label>
+                        <input type="color" id="strokeColor" value="#21005D">
+                    </div>
+                </div>
+
+                <div class="toolbar-section">
+                    <h3>File Operations</h3>
+                    <md-filled-tonal-button id="savePolygons" class="tool-button">
+                        <md-icon slot="icon">save</md-icon>
+                        Save
+                    </md-filled-tonal-button>
+                    
+                    <md-filled-tonal-button id="loadPolygons" class="tool-button">
+                        <md-icon slot="icon">upload_file</md-icon>
+                        Load
+                    </md-filled-tonal-button>
+                    
+                    <md-outlined-button id="exportJSON" class="tool-button">
+                        <md-icon slot="icon">download</md-icon>
+                        Export JSON
+                    </md-outlined-button>
+                    
+                    <input type="file" id="fileInput" accept=".json" style="display: none;">
+                </div>
+
+                <div class="toolbar-section">
+                    <h3>Actions</h3>
+                    <md-outlined-button id="deleteSelected" class="tool-button">
+                        <md-icon slot="icon">delete</md-icon>
+                        Delete Selected
+                    </md-outlined-button>
+                    
+                    <md-filled-tonal-button id="clearCanvas" class="tool-button">
+                        <md-icon slot="icon">delete_sweep</md-icon>
+                        Clear All
+                    </md-filled-tonal-button>
+                </div>
+
+                <div class="toolbar-section info-section">
+                    <h3>Quick Stats</h3>
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <span class="stat-value" id="totalPolygons">0</span>
+                            <span class="stat-label">Total</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="totalVertices">0</span>
+                            <span class="stat-label">Vertices</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>

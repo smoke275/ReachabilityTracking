@@ -1,0 +1,32 @@
+{
+  "name": "polygon-visualizer",
+  "version": "1.0.0",
+  "description": "A polygon drag and visualization tool with Material Design 3",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve": "vite preview",
+    "clean": "rm -rf dist node_modules/.vite",
+    "clean:all": "rm -rf dist node_modules",
+    "reinstall": "npm run clean:all && npm install",
+    "lint": "echo 'No linter configured yet'",
+    "format": "echo 'No formatter configured yet'"
+  },
+  "keywords": [
+    "polygon",
+    "visualization",
+    "material-design"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "vite": "^4.5.0"
+  },
+  "dependencies": {
+    "@material/web": "^1.5.0"
+  }
+}
