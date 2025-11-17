@@ -50,34 +50,6 @@
     box-sizing: border-box;
 }
 
-/* Material Symbols Configuration */
-md-icon {
-    font-variation-settings: 
-        'FILL' 0,
-        'wght' 400,
-        'GRAD' 0,
-        'opsz' 24;
-}
-
-/* Material Icons Font Support (fallback for any remaining uses) */
-.material-icons {
-    font-family: 'Material Symbols Outlined';
-    font-weight: normal;
-    font-style: normal;
-    font-size: 24px;
-    line-height: 1;
-    letter-spacing: normal;
-    text-transform: none;
-    display: inline-block;
-    white-space: nowrap;
-    word-wrap: normal;
-    direction: ltr;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-}
-
 html, body {
     height: 100%;
     overflow: hidden;
@@ -96,14 +68,14 @@ body {
     height: 100vh;
 }
 
-/* Main Layout - Sidebar Left, Canvas Center, Toolbox Right */
+/* Main Layout - Canvas Left, Toolbar Right */
 .main-layout {
     display: flex;
     flex: 1;
     overflow: hidden;
 }
 
-/* Canvas Section - Center */
+/* Canvas Section - Left Side */
 .canvas-section {
     flex: 1;
     display: flex;
@@ -135,23 +107,14 @@ body {
                 0 4px 12px rgba(103, 80, 164, 0.3);
 }
 
-/* Sidebar Toolbar Base Styles */
+/* Sidebar Toolbar - Right Side */
 .sidebar-toolbar {
     width: 320px;
     background: var(--md-sys-color-surface-container, #F3EDF7);
-    box-shadow: 0 0 8px rgba(0, 0, 0, 0.08);
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.08);
     overflow-y: auto;
     overflow-x: hidden;
     z-index: 5;
-}
-
-/* Left Sidebar - Draw Tools */
-.sidebar-left {
-    border-right: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
-}
-
-/* Right Sidebar - Toolbox */
-.sidebar-right {
     border-left: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
 }
 
@@ -171,4 +134,28 @@ body {
 
 .sidebar-toolbar::-webkit-scrollbar-thumb:hover {
     background: var(--md-sys-color-outline, #79747E);
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+    .main-layout {
+        flex-direction: column-reverse;
+    }
+
+    .sidebar-toolbar {
+        width: 100%;
+        max-height: 40vh;
+        border-left: none;
+        border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
+    }
+
+    .canvas-section {
+        min-height: 60vh;
+    }
+}
+
+@media (max-width: 768px) {
+    .canvas-container {
+        padding: 16px;
+    }
 }
