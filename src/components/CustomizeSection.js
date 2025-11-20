@@ -77,8 +77,8 @@ export class CustomizeSection extends HTMLElement {
                     position: fixed;
                     z-index: 10000;
                     display: none;
-                    background: var(--md-sys-color-surface, #FEF7FF);
-                    border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
+                    background: var(--floating-surface, #E0F7F9);
+                    border: 1px solid rgba(8, 52, 59, 0.2);
                     border-radius: 14px;
                     box-shadow: 0 8px 24px rgba(0,0,0,0.25);
                     padding: 1.25rem 1.25rem 1rem;
@@ -90,20 +90,20 @@ export class CustomizeSection extends HTMLElement {
                     font-weight: 600;
                     letter-spacing: 0.5px;
                     text-transform: uppercase;
-                    color: var(--md-sys-color-primary, #6750A4);
+                    color: var(--floating-primary, #0E7490);
                 }
                 .customize-popup .color-picker { margin-bottom: 0.9rem; }
                 .customize-popup .color-picker:last-child { margin-bottom: 0; }
                 .customize-popup label {
                     display: block; margin-bottom: 0.4rem; font-size: 0.75rem; font-weight: 500;
-                    color: var(--md-sys-color-on-surface, #1D1B20);
+                    color: var(--floating-on-surface, #08343B);
                 }
                 .customize-popup input[type=color] {
-                    width: 100%; height: 44px; border: 2px solid var(--md-sys-color-outline,#79747E);
+                    width: 100%; height: 44px; border: 2px solid rgba(14,116,144,0.35);
                     border-radius: 8px; cursor: pointer; background: transparent; transition: border-color .15s, box-shadow .15s;
                 }
-                .customize-popup input[type=color]:hover { border-color: var(--md-sys-color-primary,#6750A4); }
-                .customize-popup input[type=color]:focus { outline: none; border-color: var(--md-sys-color-primary,#6750A4); box-shadow: 0 0 0 3px var(--md-sys-color-primary-container,#EADDFF); }
+                .customize-popup input[type=color]:hover { border-color: var(--floating-primary,#0E7490); }
+                .customize-popup input[type=color]:focus { outline: none; border-color: var(--floating-primary,#0E7490); box-shadow: 0 0 0 3px rgba(14,116,144,0.25); }
             `;
             document.head.appendChild(styleTag);
         }

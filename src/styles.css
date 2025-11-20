@@ -172,3 +172,307 @@ body {
 .sidebar-toolbar::-webkit-scrollbar-thumb:hover {
     background: var(--md-sys-color-outline, #79747E);
 }
+
+/* ============================================================================
+   Floating Window Styles (for ActiveTrackingWindow)
+   ============================================================================ */
+
+.floating-window {
+    position: fixed;
+    background: var(--md-sys-color-surface-container-high, #ECE6F0);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    min-width: 400px;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    z-index: 1000;
+    /* Remove centering transform - will be positioned by JS */
+}
+
+.floating-window .window-header {
+    background: var(--md-sys-color-primary, #6750A4);
+    color: var(--md-sys-color-on-primary, #FFFFFF);
+    padding: 1rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: grab;
+    user-select: none;
+}
+
+.floating-window .window-header:active {
+    cursor: grabbing;
+}
+
+.floating-window .window-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 500;
+}
+
+.floating-window .close-btn {
+    background: transparent;
+    border: none;
+    color: var(--md-sys-color-on-primary, #FFFFFF);
+    font-size: 1.5rem;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+}
+
+.floating-window .close-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.floating-window .window-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+    /* Ensure consistent scroll container like other windows */
+    max-height: 500px; /* match Visibility/RRT windows */
+    overscroll-behavior: contain;
+    scrollbar-width: thin; /* Firefox */
+    min-height: 0; /* allow flex child to shrink and keep scrollable */
+}
+
+/* Scrollbar styling for floating window content (WebKit) */
+.floating-window .window-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.floating-window .window-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.floating-window .window-content::-webkit-scrollbar-thumb {
+    background: rgba(0,0,0,0.25);
+    border-radius: 4px;
+}
+
+.floating-window .section {
+    margin-bottom: 1.5rem;
+}
+
+.floating-window .section:last-child {
+    margin-bottom: 0;
+}
+
+.floating-window .section h4 {
+    margin: 0 0 1rem 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--md-sys-color-primary, #6750A4);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.floating-window .btn {
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.floating-window .btn-primary {
+    background: var(--md-sys-color-primary, #6750A4);
+    color: var(--md-sys-color-on-primary, #FFFFFF);
+}
+
+.floating-window .btn-primary:hover {
+    background: var(--md-sys-color-primary, #6750A4);
+    opacity: 0.9;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.floating-window .btn-secondary {
+    background: var(--md-sys-color-secondary-container, #E8DEF8);
+    color: var(--md-sys-color-on-secondary-container, #1D192B);
+}
+
+.floating-window .btn-secondary:hover {
+    background: var(--md-sys-color-secondary-container, #E8DEF8);
+    opacity: 0.9;
+}
+
+.floating-window .btn-small {
+    padding: 0.5rem 1rem;
+    font-size: 0.8125rem;
+}
+
+.floating-window .control-group {
+    margin-bottom: 1rem;
+}
+
+.floating-window .control-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--md-sys-color-on-surface-variant, #49454F);
+}
+
+.floating-window .control-group input[type="number"] {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
+    border-radius: 4px;
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+}
+
+.floating-window .control-group input[type="checkbox"] {
+    margin-right: 0.5rem;
+}
+
+.floating-window .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+}
+
+.floating-window .stat-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: var(--md-sys-color-surface-container, #F3EDF7);
+    border-radius: 8px;
+}
+
+.floating-window .stat-label {
+    font-size: 0.875rem;
+    color: var(--md-sys-color-on-surface-variant, #49454F);
+}
+
+.floating-window .stat-value {
+    font-weight: 600;
+    color: var(--md-sys-color-on-surface, #1D1B20);
+}
+
+.floating-window .status-text {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+}
+
+.floating-window .status-working {
+    background: var(--md-sys-color-secondary-container, #E8DEF8);
+    color: var(--md-sys-color-on-secondary-container, #1D192B);
+}
+
+.floating-window .status-success {
+    background: rgba(76, 175, 80, 0.1);
+    color: #2E7D32;
+}
+
+.floating-window .status-error {
+    background: var(--md-sys-color-error-container, #F9DEDC);
+    color: var(--md-sys-color-on-error-container, #410E0B);
+}
+
+.floating-window .query-result {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.floating-window .query-result.info {
+    background: var(--md-sys-color-primary-container, #EADDFF);
+    color: var(--md-sys-color-on-primary-container, #21005D);
+}
+
+.floating-window .query-result.error {
+    background: var(--md-sys-color-error-container, #F9DEDC);
+    color: var(--md-sys-color-on-error-container, #410E0B);
+}
+
+.floating-window .query-result.success {
+    background: rgba(76, 175, 80, 0.1);
+    color: #2E7D32;
+}
+
+.floating-window .query-result.warning {
+    background: rgba(255, 152, 0, 0.1);
+    color: #E65100;
+}
+
+/* Strategy list styles */
+.floating-window .strategy-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0;
+}
+
+.floating-window .strategy-list li {
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.02);
+    transition: background 0.2s;
+}
+
+.floating-window .strategy-list li.selected {
+    background: var(--md-sys-color-primary-container, #EADDFF);
+    border-left: 3px solid var(--md-sys-color-primary, #6750A4);
+    padding-left: calc(0.5rem - 3px);
+}
+
+.floating-window .strategy-list li:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.floating-window .badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    margin-left: 0.5rem;
+    border-radius: 12px;
+    background: var(--md-sys-color-primary, #6750A4);
+    color: var(--md-sys-color-on-primary, #FFFFFF);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.floating-window .icon {
+    font-size: 1.125rem;
+}
+
+/* Info box for instructions */
+.floating-window .info-box {
+    background: rgba(103, 80, 164, 0.05);
+    border-left: 3px solid var(--md-sys-color-primary, #6750A4);
+    padding: 1rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+}
+
+.floating-window .info-box p {
+    margin: 0.5rem 0;
+}
+
+.floating-window .info-box strong {
+    color: var(--md-sys-color-primary, #6750A4);
+}
+
+.floating-window .info-box ol,
+.floating-window .info-box ul {
+    margin: 0.5rem 0 0.5rem 1.5rem;
+}
+
+.floating-window .info-box li {
+    margin: 0.25rem 0;
+}
