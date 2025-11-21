@@ -15,6 +15,82 @@ import { eventBus } from '../utils/EventBus.js';
 import { rrtStarService } from './RRTStarService.js';
 import { activeTrackingService } from './ActiveTrackingService.js';
 
+// Worker handle
+let plannerWorker = null;
+let usingWASM = false;
+
+async function startPlannerWorker() {
+    if (plannerWorker) return plannerWorker;
+    
+    // Try WASM worker first
+    try {
+        console.log('Attempting to load WASM worker...');
+        plannerWorker = new Worker(new URL('../workers/plannerWASMWorker.js', import.meta.url), { type: 'module' });
+        
+        // Wait for ready signal with timeout
+        const ready = await new Promise((resolve) => {
+            const timeout = setTimeout(() => resolve(false), 2000);
+            
+            plannerWorker.onmessage = (e) => {
+                if (e.data.type === 'ready' || e.data.type === 'initialized') {
+                    clearTimeout(timeout);
+                    resolve(true);
+                }
+            };
+            
+            plannerWorker.onerror = () => {
+                clearTimeout(timeout);
+                resolve(false);
+            };
+        });
+        
+        if (ready) {
+            usingWASM = true;
+            console.log('✅ Using WASM worker for high-performance planning');
+            return plannerWorker;
+        } else {
+            throw new Error('WASM worker initialization timeout');
+        }
+    } catch (error) {
+        console.warn('⚠️ WASM worker failed:', error.message);
+        if (plannerWorker) {
+            plannerWorker.terminate();
+            plannerWorker = null;
+        }
+    }
+    
+    // Fall back to JavaScript worker
+    try {
+        console.log('Falling back to JavaScript worker...');
+        plannerWorker = new Worker(new URL('../workers/plannerWorker.js', import.meta.url), { type: 'module' });
+        usingWASM = false;
+        console.log('✅ Using JavaScript worker');
+        return plannerWorker;
+    } catch (error) {
+        console.error('❌ Failed to create JavaScript worker:', error);
+        plannerWorker = null;
+        return null;
+    }
+}
+
+function terminatePlannerWorker() {
+    if (plannerWorker) {
+        plannerWorker.terminate();
+        plannerWorker = null;
+        usingWASM = false;
+    }
+}
+
+function reconstructTreeFromFlat(flat) {
+    if (!flat || !flat.nodes || !flat.nodes.length) return null;
+    const nodes = flat.nodes.map(n => ({ state: { x: n.x, y: n.y, theta: n.theta }, cost: n.cost, parent: null, children: [] }));
+    for (const [pi, ci] of flat.edges) {
+        nodes[ci].parent = nodes[pi];
+        nodes[pi].children.push(nodes[ci]);
+    }
+    return nodes[0];
+}
+
 export class RealTimeTrackingService {
     constructor() {
         this.isTracking = false;
@@ -85,6 +161,8 @@ export class RealTimeTrackingService {
             lastUpdate: Date.now()
         };
         
+        // Obstacles
+        this.obstacles = [];
         console.log('RealTimeTrackingService initialized');
     }
 
@@ -97,9 +175,20 @@ export class RealTimeTrackingService {
     }
 
     /**
+     * Set obstacles for planning
+     */
+    setObstacles(obstacles) {
+        this.obstacles = obstacles || [];
+        const w = plannerWorker;
+        if (w) {
+            w.postMessage({ type: 'obstacles', payload: { obstacles: this.obstacles } });
+        }
+    }
+
+    /**
      * Start real-time tracking
      */
-    start(pursuerState, evaderState) {
+    async start(pursuerState, evaderState) {
         if (this.isTracking) {
             console.warn('Tracking already active');
             return;
@@ -147,11 +236,185 @@ export class RealTimeTrackingService {
 
         eventBus.emit('realTimeTracking:started');
         
-        // Do initial planning
-        this.planAsync();
+        // Initialize worker with current environment
+        plannerWorker = await startPlannerWorker();
+        if (!plannerWorker) {
+            console.error('Failed to start any worker');
+            this.stop();
+            return;
+        }
+        
+        // Setup message handler
+        let workerReady = false;
+        let initializationFailed = false;
+        
+        plannerWorker.onmessage = (e) => {
+            const { type, payload } = e.data || {};
+            
+            if (type === 'error' && payload?.wasmError && !workerReady) {
+                // WASM initialization failed, fall back to JavaScript
+                console.warn('⚠️ WASM initialization failed:', payload.message);
+                initializationFailed = true;
+                plannerWorker.terminate();
+                plannerWorker = null;
+                usingWASM = false;
+                
+                // Restart with JavaScript worker
+                this._restartWithJavaScriptWorker();
+                return;
+            }
+            
+            if (type === 'initialized') {
+                console.log('Planner worker initialized');
+                workerReady = true;
+                // Do initial planning after worker is ready
+                this.planAsync();
+            } else if (type === 'configured') {
+                console.log('Planner worker configured');
+            } else {
+                this.onWorkerMessage(e);
+            }
+        };
+        
+        plannerWorker.onerror = (err) => {
+            console.error('Worker error:', err);
+            if (!workerReady && !initializationFailed) {
+                // Error during initialization, fall back
+                initializationFailed = true;
+                plannerWorker.terminate();
+                plannerWorker = null;
+                usingWASM = false;
+                this._restartWithJavaScriptWorker();
+            } else {
+                eventBus.emit('realTimeTracking:error', { message: 'Worker error occurred' });
+            }
+        };
+        
+        // Send initialization
+        plannerWorker.postMessage({
+            type: 'init',
+            payload: {
+                obstacles: this.obstacles || rrtStarService.obstacles || [],
+                rrtConfig: usingWASM ? {
+                    // WASM expects camelCase
+                    maxNodes: this.config.maxNodes,
+                    maxPlanningTime: this.config.maxPlanningTime,
+                    steerTime: this.config.steerTime,
+                    dt: this.config.dt,
+                    goalSampleRate: this.config.goalSampleRate,
+                    rewireRadius: this.config.rewireRadius,
+                    robotRadius: this.config.robotRadius,
+                    vMax: this.config.vMax,
+                    vMin: this.config.vMin,
+                    omegaMax: this.config.omegaMax,
+                    bounds: {
+                        xMin: rrtStarService.config.bounds.x_min,
+                        xMax: rrtStarService.config.bounds.x_max,
+                        yMin: rrtStarService.config.bounds.y_min,
+                        yMax: rrtStarService.config.bounds.y_max
+                    }
+                } : {
+                    // JavaScript expects snake_case
+                    max_nodes: this.config.maxNodes,
+                    max_planning_time: this.config.maxPlanningTime,
+                    steer_time: this.config.steerTime,
+                    dt: this.config.dt,
+                    goal_sample_rate: this.config.goalSampleRate,
+                    rewire_radius: this.config.rewireRadius,
+                    robot_radius: this.config.robotRadius,
+                    v_max: this.config.vMax,
+                    v_min: this.config.vMin,
+                    omega_max: this.config.omegaMax,
+                    bounds: rrtStarService.config?.bounds
+                },
+                pursuerSensorParams: usingWASM ? {
+                    // WASM expects camelCase
+                    enabled: this.config.pursuerSensorEnabled,
+                    rMin: this.config.pursuerRMin,
+                    rMax: this.config.pursuerRMax,
+                    fov: this.config.pursuerFOV,
+                    orientation: 0.0
+                } : {
+                    // JavaScript expects snake_case
+                    enabled: this.config.pursuerSensorEnabled,
+                    R_min: this.config.pursuerRMin,
+                    R_max: this.config.pursuerRMax,
+                    fov: this.config.pursuerFOV
+                }
+            }
+        });
         
         // Start continuous animation loop
         this.animate();
+    }
+
+    /**
+     * Restart with JavaScript worker after WASM failure
+     */
+    async _restartWithJavaScriptWorker() {
+        console.log('Falling back to JavaScript worker...');
+        
+        try {
+            plannerWorker = new Worker(new URL('../workers/plannerWorker.js', import.meta.url), { type: 'module' });
+            usingWASM = false;
+            console.log('✅ Using JavaScript worker');
+            
+            // Setup message handler
+            let workerReady = false;
+            
+            plannerWorker.onmessage = (e) => {
+                const { type, payload } = e.data || {};
+                
+                if (type === 'initialized') {
+                    console.log('JavaScript worker initialized');
+                    workerReady = true;
+                    // Do initial planning after worker is ready
+                    this.planAsync();
+                } else if (type === 'configured') {
+                    console.log('JavaScript worker configured');
+                } else {
+                    this.onWorkerMessage(e);
+                }
+            };
+            
+            plannerWorker.onerror = (err) => {
+                console.error('JavaScript worker error:', err);
+                eventBus.emit('realTimeTracking:error', { message: 'Worker error occurred' });
+            };
+            
+            // Send initialization
+            plannerWorker.postMessage({
+                type: 'init',
+                payload: {
+                    obstacles: this.obstacles || rrtStarService.obstacles || [],
+                    rrtConfig: {
+                        // JavaScript worker always uses snake_case
+                        max_nodes: this.config.maxNodes,
+                        max_planning_time: this.config.maxPlanningTime,
+                        steer_time: this.config.steerTime,
+                        dt: this.config.dt,
+                        goal_sample_rate: this.config.goalSampleRate,
+                        rewire_radius: this.config.rewireRadius,
+                        robot_radius: this.config.robotRadius,
+                        v_max: this.config.vMax,
+                        v_min: this.config.vMin,
+                        omega_max: this.config.omegaMax,
+                        bounds: rrtStarService.config?.bounds
+                    },
+                    pursuerSensorParams: {
+                        // JavaScript worker uses snake_case
+                        enabled: this.config.pursuerSensorEnabled,
+                        R_min: this.config.pursuerRMin,
+                        R_max: this.config.pursuerRMax,
+                        fov: this.config.pursuerFOV
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('❌ Failed to start JavaScript worker:', error);
+            eventBus.emit('realTimeTracking:error', { message: 'Failed to start fallback worker' });
+            this.stop();
+        }
     }
 
     /**
@@ -194,6 +457,7 @@ export class RealTimeTrackingService {
             this.sensorModelService.pursuerSensor.fov = this.originalSensorConfig.pursuer.fov;
         }
 
+        terminatePlannerWorker();
         console.log('Real-time tracking stopped');
         eventBus.emit('realTimeTracking:stopped', this.stats);
     }
@@ -323,257 +587,139 @@ export class RealTimeTrackingService {
         this.lastReplanTime = planStart;
         
         try {
-            console.log(`\n=== Real-Time Tracking Planning ${this.stats.iterations + 1} ===`);
+            // Use plannerWorker directly (it's the manager)
+            if (!plannerWorker) throw new Error('Planner worker unavailable');
             
-            // Step 1: Build RRT* trees from current states
-            await this.buildTrees();
-
-            // Step 2: Compute visibility matrix
-            const visibilityResult = this.computeVisibility();
+            const strategy = this.config.strategy || 'tma';
+            const pState = {
+                x: this.pursuerState.position.x,
+                y: this.pursuerState.position.y,
+                theta: this.pursuerState.heading || 0
+            };
+            const eState = {
+                x: this.evaderState.position.x,
+                y: this.evaderState.position.y,
+                theta: this.evaderState.heading || 0
+            };
             
-            if (!visibilityResult.success) {
-                throw new Error('Failed to compute visibility');
-            }
-
-            // Step 3: Choose strategy and select target nodes
-            const targets = this.chooseTargets();
-            
-            if (!targets) {
-                throw new Error('Failed to choose target nodes');
-            }
-
-            // Step 4: Extract paths from root to targets
-            this.pursuerPath = this.reconstructPath(this.pursuerTree, targets.pursuerIndex);
-            this.evaderPath = this.reconstructPath(this.evaderTree, targets.evaderIndex);
-            
-            // Reset waypoint indices
-            this.pursuerWaypointIndex = 0;
-            this.evaderWaypointIndex = 0;
-
-            // Get winning nodes for visualization
-            const pursuerNodes = activeTrackingService.treeToArray(this.pursuerTree);
-            const evaderNodes = activeTrackingService.treeToArray(this.evaderTree);
-            const pursuerWinningNode = targets.pursuerIndex >= 0 ? pursuerNodes[targets.pursuerIndex] : null;
-            const evaderWinningNode = targets.evaderIndex >= 0 ? evaderNodes[targets.evaderIndex] : null;
-
-            // Update statistics
-            this.stats.iterations++;
-            this.stats.planningTime = performance.now() - planStart;
-
-            // Emit update event with trees and winning nodes
-            console.log('Emitting realTimeTracking:update with trees:', {
-                hasPursuerTree: !!this.pursuerTree,
-                hasEvaderTree: !!this.evaderTree,
-                pursuerTreeNodes: this.pursuerTree ? Object.keys(this.pursuerTree).length : 0,
-                evaderTreeNodes: this.evaderTree ? Object.keys(this.evaderTree).length : 0,
-                pursuerWinningNode: pursuerWinningNode,
-                evaderWinningNode: evaderWinningNode,
-                iteration: this.stats.iterations
+            // Push latest config deltas (if sliders changed during run)
+            plannerWorker.postMessage({
+                type: 'config',
+                payload: usingWASM ? {
+                    // WASM expects camelCase
+                    rrtConfig: {
+                        maxNodes: this.config.maxNodes,
+                        maxPlanningTime: this.config.maxPlanningTime,
+                        steerTime: this.config.steerTime,
+                        dt: this.config.dt,
+                        goalSampleRate: this.config.goalSampleRate,
+                        rewireRadius: this.config.rewireRadius,
+                        robotRadius: this.config.robotRadius,
+                        vMax: this.config.vMax,
+                        vMin: this.config.vMin,
+                        omegaMax: this.config.omegaMax
+                    },
+                    pursuerSensorParams: {
+                        enabled: this.config.pursuerSensorEnabled,
+                        rMin: this.config.pursuerRMin,
+                        rMax: this.config.pursuerRMax,
+                        fov: this.config.pursuerFOV,
+                        orientation: 0.0
+                    }
+                } : {
+                    // JavaScript expects snake_case
+                    rrtConfig: {
+                        max_nodes: this.config.maxNodes,
+                        max_planning_time: this.config.maxPlanningTime,
+                        steer_time: this.config.steerTime,
+                        dt: this.config.dt,
+                        goal_sample_rate: this.config.goalSampleRate,
+                        rewire_radius: this.config.rewireRadius,
+                        robot_radius: this.config.robotRadius,
+                        v_max: this.config.vMax,
+                        v_min: this.config.vMin,
+                        omega_max: this.config.omegaMax
+                    },
+                    pursuerSensorParams: {
+                        enabled: this.config.pursuerSensorEnabled,
+                        R_min: this.config.pursuerRMin,
+                        R_max: this.config.pursuerRMax,
+                        fov: this.config.pursuerFOV
+                    }
+                }
             });
             
-            eventBus.emit('realTimeTracking:update', {
-                pursuerState: this.pursuerState,
-                evaderState: this.evaderState,
-                pursuerPath: this.pursuerPath,
-                evaderPath: this.evaderPath,
-                pursuerTree: this.pursuerTree,
-                evaderTree: this.evaderTree,
-                pursuerWinningNode: pursuerWinningNode,
-                evaderWinningNode: evaderWinningNode,
-                strategy: this.config.strategy,
-                stats: this.stats
-            });
-
+            // Request plan
+            plannerWorker.postMessage({ type: 'plan', payload: { pursuerState: pState, evaderState: eState, strategy } });
+            
+            // Return immediately; result handled in onWorkerMessage
         } catch (error) {
             console.error('Planning error:', error);
-            eventBus.emit('realTimeTracking:error', {
-                message: error.message
-            });
+            eventBus.emit('realTimeTracking:error', { message: error.message });
             this.stop();
         }
     }
 
-    /**
-     * Build RRT* trees from current agent states
-     */
-    async buildTrees() {
-        // Get sensor service from activeTrackingService
-        if (!this.sensorModelService) {
-            this.sensorModelService = activeTrackingService.sensorModelService;
-            if (!this.sensorModelService) {
-                throw new Error('SensorModelService not available. Make sure it is initialized in the app.');
-            }
+    onWorkerMessage(e) {
+        const { type, payload } = e.data || {};
+        if (type === 'initialized' || type === 'configured') return;
+        if (type === 'error') {
+            eventBus.emit('realTimeTracking:error', { message: payload?.message || 'Worker error' });
+            return;
         }
-        
-        // Save original configs if this is the first time
-        if (!this.originalRRTConfig) {
-            this.originalRRTConfig = {
-                max_nodes: rrtStarService.config.max_nodes,
-                max_planning_time: rrtStarService.config.max_planning_time,
-                steer_time: rrtStarService.config.steer_time,
-                dt: rrtStarService.config.dt,
-                goal_sample_rate: rrtStarService.config.goal_sample_rate,
-                rewire_radius: rrtStarService.config.rewire_radius,
-                robot_radius: rrtStarService.config.robot_radius,
-                v_max: rrtStarService.config.v_max,
-                v_min: rrtStarService.config.v_min,
-                omega_max: rrtStarService.config.omega_max
-            };
-        }
-        
-        // Save original sensor config if this is the first time
-        if (!this.originalSensorConfig) {
-            this.originalSensorConfig = {
-                pursuer: {
-                    enabled: this.sensorModelService.pursuerSensor.enabled,
-                    R_min: this.sensorModelService.pursuerSensor.R_min,
-                    R_max: this.sensorModelService.pursuerSensor.R_max,
-                    fov: this.sensorModelService.pursuerSensor.fov
-                }
-            };
-        }
-        
-        // Apply Real-Time Tracking RRT configuration
-        rrtStarService.config.max_nodes = this.config.maxNodes;
-        rrtStarService.config.max_planning_time = this.config.maxPlanningTime;
-        rrtStarService.config.steer_time = this.config.steerTime;
-        rrtStarService.config.dt = this.config.dt;
-        rrtStarService.config.goal_sample_rate = this.config.goalSampleRate;
-        rrtStarService.config.rewire_radius = this.config.rewireRadius;
-        rrtStarService.config.robot_radius = this.config.robotRadius;
-        rrtStarService.config.v_max = this.config.vMax;
-        rrtStarService.config.v_min = this.config.vMin;
-        rrtStarService.config.omega_max = this.config.omegaMax;
-        
-        // Apply Real-Time Tracking Pursuer Sensor configuration (only pursuer sensor is used for visibility)
-        this.sensorModelService.pursuerSensor.enabled = this.config.pursuerSensorEnabled;
-        this.sensorModelService.pursuerSensor.R_min = this.config.pursuerRMin;
-        this.sensorModelService.pursuerSensor.R_max = this.config.pursuerRMax;
-        this.sensorModelService.pursuerSensor.fov = this.config.pursuerFOV;
-        
-        // Convert state format: {position: {x, y}, heading} -> {x, y, theta}
-        const pursuerRRTState = {
-            x: this.pursuerState.position.x,
-            y: this.pursuerState.position.y,
-            theta: this.pursuerState.heading || 0
-        };
-        
-        const evaderRRTState = {
-            x: this.evaderState.position.x,
-            y: this.evaderState.position.y,
-            theta: this.evaderState.heading || 0
-        };
-        
-        // Set agent states in rrtStarService
-        rrtStarService.setPursuerState(pursuerRRTState);
-        rrtStarService.setEvaderState(evaderRRTState);
-        
-        // Build both trees
-        const result = rrtStarService.planBothAgents();
-        
-        if (!result) {
-            throw new Error('Failed to build RRT* trees');
-        }
-        
-        this.pursuerTree = result.pursuerTree;
-        this.evaderTree = result.evaderTree;
+        if (type !== 'planned') return;
 
-        // Count nodes properly
-        const pursuerNodeCount = this.countTreeNodes(this.pursuerTree);
-        const evaderNodeCount = this.countTreeNodes(this.evaderTree);
-
-        console.log('RRT* trees built:', {
-            pursuerNodes: pursuerNodeCount,
-            evaderNodes: evaderNodeCount,
-            pursuerTreeObject: this.pursuerTree ? 'exists' : 'null',
-            evaderTreeObject: this.evaderTree ? 'exists' : 'null'
-        });
-
-        return {
+        const { stats, pursuer, evader, strategy } = payload;
+        // Reconstruct trees for current drawing code
+        this.pursuerTree = reconstructTreeFromFlat(pursuer);
+        this.evaderTree = reconstructTreeFromFlat(evader);
+        
+        // Paths and winning nodes
+        this.pursuerPath = pursuer.path || [];
+        this.evaderPath = evader.path || [];
+        this.pursuerWaypointIndex = 0;
+        this.evaderWaypointIndex = 0;
+        
+        // Winning nodes (for visualization)
+        let pursuerWinningNode = null;
+        let evaderWinningNode = null;
+        if (this.pursuerTree && Number.isInteger(pursuer.winningIndex)) {
+            const nodes = activeTrackingService.treeToArray(this.pursuerTree);
+            pursuerWinningNode = nodes[pursuer.winningIndex] || null;
+        }
+        if (this.evaderTree && Number.isInteger(evader.winningIndex)) {
+            const nodes = activeTrackingService.treeToArray(this.evaderTree);
+            evaderWinningNode = nodes[evader.winningIndex] || null;
+        }
+        
+        // Update statistics
+        this.stats.iterations++;
+        this.stats.planningTime = stats?.planningTime ?? 0;
+        
+        // Re-emit events for UI
+        eventBus.emit('rrt:treesBuilt', {
             pursuerTree: this.pursuerTree,
-            evaderTree: this.evaderTree
-        };
-    }
-
-    /**
-     * Compute visibility matrix using ActiveTrackingService
-     */
-    computeVisibility() {
-        try {
-            const result = activeTrackingService.computeVisibilityMatrix(
-                this.pursuerTree,
-                this.evaderTree
-            );
-            
-            return {
-                success: true,
-                result: result
-            };
-        } catch (error) {
-            console.error('Visibility computation failed:', error);
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }
-
-    /**
-     * Choose target nodes using selected strategy
-     */
-    chooseTargets() {
-        // Get strategies from ActiveTrackingService
-        const strategies = activeTrackingService.computeStrategies();
+            evaderTree: this.evaderTree,
+            stats: {
+                pursuerNodes: pursuer?.nodes?.length || 0,
+                evaderNodes: evader?.nodes?.length || 0,
+                planningTime: this.stats.planningTime
+            }
+        });
         
-        if (!strategies || !strategies[this.config.strategy]) {
-            console.warn('Strategy not found:', this.config.strategy);
-            return null;
-        }
-
-        const selectedStrategy = strategies[this.config.strategy];
-        
-        if (!selectedStrategy.winningNode) {
-            console.warn('No winning node for strategy:', this.config.strategy);
-            return null;
-        }
-
-        // Return indices based on strategy type (use winningNodeIndex, not winningNode.index)
-        if (selectedStrategy.type === 'pursuer') {
-            return {
-                pursuerIndex: selectedStrategy.winningNodeIndex,
-                evaderIndex: 0  // Evader stays at root initially
-            };
-        } else {
-            return {
-                pursuerIndex: 0,  // Pursuer stays at root initially
-                evaderIndex: selectedStrategy.winningNodeIndex
-            };
-        }
-    }
-
-    /**
-     * Reconstruct path from root to target node
-     */
-    reconstructPath(tree, targetIndex) {
-        const nodes = activeTrackingService.treeToArray(tree);
-        
-        if (targetIndex < 0 || targetIndex >= nodes.length) {
-            return [];
-        }
-
-        const path = [];
-        let current = nodes[targetIndex];
-
-        while (current) {
-            path.unshift({
-                x: current.state.x,
-                y: current.state.y,
-                theta: current.state.theta
-            });
-            current = current.parent;
-        }
-
-        return path;
+        eventBus.emit('realTimeTracking:update', {
+            pursuerState: this.pursuerState,
+            evaderState: this.evaderState,
+            pursuerPath: this.pursuerPath,
+            evaderPath: this.evaderPath,
+            pursuerTree: this.pursuerTree,
+            evaderTree: this.evaderTree,
+            pursuerWinningNode,
+            evaderWinningNode,
+            strategy,
+            stats: this.stats,
+            usingWASM: usingWASM
+        });
     }
 
     /**
@@ -628,7 +774,8 @@ export class RealTimeTrackingService {
             config: this.config,
             stats: this.stats,
             pursuerState: this.pursuerState,
-            evaderState: this.evaderState
+            evaderState: this.evaderState,
+            usingWASM: usingWASM
         };
     }
 
@@ -645,6 +792,85 @@ export class RealTimeTrackingService {
         
         // DO NOT update evader position here - it's controlled by EvaderService
         // If we emit evader:positionUpdate, it will interfere with the evader simulation
+    }
+
+    /**
+     * Reset pursuer spawn near the evader, inside bounds and not colliding with polygons
+     */
+    resetNearEvader() {
+        // Ensure we have current evader state
+        if (!this.evaderState || !this.evaderState.position) {
+            eventBus.emit('realTimeTracking:requestEvaderState', (ev) => {
+                if (ev && ev.position) {
+                    this.evaderState = {
+                        position: { x: ev.position.x, y: ev.position.y },
+                        heading: ev.heading || 0,
+                        speed: ev.speed,
+                        angularSpeed: ev.angularSpeed
+                    };
+                    this._resetNearEvaderInternal();
+                } else {
+                    eventBus.emit('realTimeTracking:error', { message: 'Evader state unavailable' });
+                }
+            });
+            return;
+        }
+        this._resetNearEvaderInternal();
+    }
+
+    _resetNearEvaderInternal() {
+        const ev = this.evaderState;
+        const bounds = (rrtStarService.config && rrtStarService.config.bounds) || { x_min: -Infinity, x_max: Infinity, y_min: -Infinity, y_max: Infinity };
+        const robotR = this.config.robotRadius ?? rrtStarService.config?.robot_radius ?? 8.0;
+
+        const distances = [30, 50, 80, 120, 160];
+        const angleSteps = 24; // 15° steps
+        const twoPi = Math.PI * 2;
+
+        const withinBounds = (x, y) => x >= bounds.x_min && x <= bounds.x_max && y >= bounds.y_min && y <= bounds.y_max;
+
+        let chosen = null;
+        // Try around evader
+        for (const d of distances) {
+            for (let k = 0; k < angleSteps; k++) {
+                const ang = (k / angleSteps) * twoPi;
+                const x = ev.position.x + Math.cos(ang) * d;
+                const y = ev.position.y + Math.sin(ang) * d;
+                if (!withinBounds(x, y)) continue;
+                const heading = Math.atan2(ev.position.y - y, ev.position.x - x); // face the evader
+                const state = { x, y, theta: heading };
+                // Use RRT service collision check (uses its obstacles & robot radius)
+                const collision = rrtStarService.isStateInCollision ? rrtStarService.isStateInCollision(state) : false;
+                if (!collision) { chosen = { x, y, heading }; break; }
+            }
+            if (chosen) break;
+        }
+
+        if (!chosen) {
+            eventBus.emit('realTimeTracking:error', { message: 'No valid spawn found near evader' });
+            return;
+        }
+
+        // Apply new pursuer state
+        this.pursuerState = {
+            position: { x: chosen.x, y: chosen.y },
+            heading: chosen.heading,
+            speed: 0,
+            angularSpeed: 0
+        };
+        this.pursuerPath = [];
+        this.pursuerWaypointIndex = 0;
+
+        // Update intruder visualization immediately
+        eventBus.emit('intruder:positionUpdate', {
+            position: this.pursuerState.position,
+            heading: this.pursuerState.heading
+        });
+
+        // If tracking, replan from new position
+        if (this.isTracking) {
+            this.planAsync();
+        }
     }
 }
 

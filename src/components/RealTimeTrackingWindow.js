@@ -27,6 +27,7 @@ export class RealTimeTrackingWindow extends HTMLElement {
         const minimizeBtn = this.shadowRoot.querySelector('.minimize-btn');
         const startBtn = this.shadowRoot.querySelector('#startTracking');
         const stopBtn = this.shadowRoot.querySelector('#stopTracking');
+        const resetBtn = this.shadowRoot.querySelector('#resetNearEvader');
 
         // Dragging functionality
         header.addEventListener('mousedown', (e) => this.startDragging(e));
@@ -40,6 +41,7 @@ export class RealTimeTrackingWindow extends HTMLElement {
         // Tracking controls
         startBtn?.addEventListener('click', () => this.startTracking());
         stopBtn?.addEventListener('click', () => this.stopTracking());
+        resetBtn?.addEventListener('click', () => realTimeTrackingService.resetNearEvader());
 
         // Strategy selector
         const strategySelect = this.shadowRoot.querySelector('#strategySelector');
@@ -175,11 +177,23 @@ export class RealTimeTrackingWindow extends HTMLElement {
         }
 
         // Update statistics
+        const statWorkerType = this.shadowRoot.querySelector('#statWorkerType');
         const statIterations = this.shadowRoot.querySelector('#statIterations');
         const statPlanningTime = this.shadowRoot.querySelector('#statPlanningTime');
         const statDistance = this.shadowRoot.querySelector('#statDistance');
         const statTreeNodes = this.shadowRoot.querySelector('#statTreeNodes');
         const statusEl = this.shadowRoot.querySelector('#trackingStatus');
+
+        // Update worker type with color coding
+        if (statWorkerType) {
+            if (data.usingWASM) {
+                statWorkerType.textContent = '🚀 WASM';
+                statWorkerType.className = 'stat-value worker-wasm';
+            } else {
+                statWorkerType.textContent = '📦 JavaScript';
+                statWorkerType.className = 'stat-value worker-js';
+            }
+        }
 
         if (statIterations) statIterations.textContent = data.stats.iterations;
         if (statPlanningTime) statPlanningTime.textContent = data.stats.planningTime.toFixed(2) + ' ms';
@@ -442,6 +456,8 @@ export class RealTimeTrackingWindow extends HTMLElement {
                     margin-bottom: 8px;
                 }
 
+                .tool-button + .tool-button { margin-left: 8px; }
+
                 .status-message {
                     font-size: 0.875rem;
                     color: var(--floating-on-surface-variant);
@@ -494,6 +510,16 @@ export class RealTimeTrackingWindow extends HTMLElement {
                     color: var(--floating-primary);
                 }
 
+                .stat-value.worker-wasm {
+                    color: #2E7D32;
+                    font-weight: 700;
+                }
+
+                .stat-value.worker-js {
+                    color: #F57C00;
+                    font-weight: 700;
+                }
+
                 .info-box {
                     background: rgba(255, 255, 255, 0.6);
                     border: 1px solid rgba(25, 118, 210, 0.2);
@@ -526,23 +552,17 @@ export class RealTimeTrackingWindow extends HTMLElement {
                     margin: 16px 0;
                 }
             </style>
-            
             <div class="window-container">
                 <div class="window-header">
                     <div class="window-title">
-                        <md-icon>track_changes</md-icon>
-                        <span>Real-Time Tracking</span>
+                        <md-icon class="title-icon">track_changes</md-icon>
+                        Real-Time Tracking
                     </div>
                     <div class="window-controls">
-                        <button class="control-btn minimize-btn" title="Minimize">
-                            <md-icon>remove</md-icon>
-                        </button>
-                        <button class="control-btn close-btn" title="Close">
-                            <md-icon>close</md-icon>
-                        </button>
+                        <button class="control-btn minimize-btn" title="Minimize"><md-icon>remove</md-icon></button>
+                        <button class="control-btn close-btn" title="Close"><md-icon>close</md-icon></button>
                     </div>
                 </div>
-                
                 <div class="window-content">
                     <div class="section">
                         <div class="section-title">Strategy</div>
@@ -654,6 +674,10 @@ export class RealTimeTrackingWindow extends HTMLElement {
                             <md-icon slot="icon">stop</md-icon>
                             Stop Tracking
                         </md-outlined-button>
+                        <md-outlined-button id="resetNearEvader" class="tool-button">
+                            <md-icon slot="icon">my_location</md-icon>
+                            Reset Near Evader
+                        </md-outlined-button>
                     </div>
 
                     <md-divider></md-divider>
@@ -661,6 +685,10 @@ export class RealTimeTrackingWindow extends HTMLElement {
                     <div class="section">
                         <div class="section-title">Live Statistics</div>
                         <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-label">Worker:</span>
+                                <span class="stat-value" id="statWorkerType">-</span>
+                            </div>
                             <div class="stat-item">
                                 <span class="stat-label">Iterations:</span>
                                 <span class="stat-value" id="statIterations">-</span>
