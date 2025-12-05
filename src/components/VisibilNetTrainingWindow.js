@@ -15,6 +15,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const savedNumRays = localStorage.getItem('visibilnet:numRays');
         this.numRays = savedNumRays ? parseInt(savedNumRays) : 36;
         this.trainingData = []; // {x, y, distances: [d1, d2, ..., dm]}
+        this.fullTrainingData = []; // Store complete dataset for filtering
         this.model = null;
         this.isTraining = false;
         this.useModelPrediction = false;
@@ -48,6 +49,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const saveDataBtn = this.shadowRoot.querySelector('#saveData');
         const loadDataBtn = this.shadowRoot.querySelector('#loadData');
         const displaySamplesBtn = this.shadowRoot.querySelector('#displaySamples');
+        const applyFilterBtn = this.shadowRoot.querySelector('#applyFilter');
+        const resetFilterBtn = this.shadowRoot.querySelector('#resetFilter');
         
         header.addEventListener('mousedown', (e) => this.startDragging(e));
         document.addEventListener('mousemove', (e) => this.drag(e));
@@ -63,6 +66,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         clearBtn?.addEventListener('click', () => {
             eventBus.emit('visibilnet:clear');
             this.trainingData = [];
+            this.fullTrainingData = [];
             this.displaySamples = false;
             this.updateDataCount();
             const displayBtn = this.shadowRoot.querySelector('#displaySamples');
@@ -90,6 +94,9 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         saveDataBtn?.addEventListener('click', () => this.saveTrainingData());
         loadDataBtn?.addEventListener('click', () => this.loadTrainingData());
         
+        applyFilterBtn?.addEventListener('click', () => this.applyDataFilter());
+        resetFilterBtn?.addEventListener('click', () => this.resetDataFilter());
+
         const saveModelBtn = this.shadowRoot.querySelector('#saveModel');
         const loadModelBtn = this.shadowRoot.querySelector('#loadModel');
         saveModelBtn?.addEventListener('click', () => this.saveModel());
@@ -208,6 +215,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                     };
                 });
                 
+                this.fullTrainingData = [...this.trainingData];
+                this.updateFilterInputsFromData();
                 this.updateDataCount();
                 this.updateTrainingStatus(`Generated ${this.trainingData.length} samples (3px grid) with ${this.numRays} rays each`);
                 
@@ -243,18 +252,23 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const outputSize = ys[0].length; // Number of rays
 
             // Normalize inputs (min-max normalization) - separate for x and y
+            // Use full dataset for normalization if available to maintain consistent scale
+            const normalizationSource = (this.fullTrainingData && this.fullTrainingData.length > 0) 
+                ? this.fullTrainingData 
+                : this.trainingData;
+
             let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-            for (const [x, y] of xs) {
-                xMin = Math.min(xMin, x);
-                xMax = Math.max(xMax, x);
-                yMin = Math.min(yMin, y);
-                yMax = Math.max(yMax, y);
+            for (const sample of normalizationSource) {
+                xMin = Math.min(xMin, sample.x);
+                xMax = Math.max(xMax, sample.x);
+                yMin = Math.min(yMin, sample.y);
+                yMax = Math.max(yMax, sample.y);
             }
             
-            // Normalize then apply Fourier encoding
+            // Normalize to [-1, 1] then apply Fourier encoding
             const xsNorm = xs.map(([x, y]) => {
-                const xNorm = (x - xMin) / (xMax - xMin || 1);
-                const yNorm = (y - yMin) / (yMax - yMin || 1);
+                const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
+                const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
                 return this.fourierEncode(xNorm, yNorm, 6); // 6 frequencies = 24 features
             });
             
@@ -262,8 +276,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
 
             // Normalize outputs (distances) without flattening - iterate to avoid stack overflow
             let dMin = Infinity, dMax = -Infinity;
-            for (const distances of ys) {
-                for (const d of distances) {
+            for (const sample of normalizationSource) {
+                for (const d of sample.distances) {
                     dMin = Math.min(dMin, d);
                     dMax = Math.max(dMax, d);
                 }
@@ -301,7 +315,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             modelInfo.textContent = `Arch: ${inputSize}→256→512→512→256→${outputSize}(relu) | Init LR: ${initialLR} | Fourier Features`;
 
             // Train model with cosine annealing learning rate
-            const epochs = 1000;
+            const epochInput = this.shadowRoot.querySelector('#epochInput');
+            const epochs = epochInput ? parseInt(epochInput.value) : 1000;
             const minLR = 0.0001;
             const statusDiv = this.shadowRoot.querySelector('#trainingStatus');
             const canvas = this.shadowRoot.querySelector('#lossGraph');
@@ -388,12 +403,12 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const tf = await import('@tensorflow/tfjs');
             const { xMin, xMax, yMin, yMax, dMin, dMax } = this.normalizationParams;
 
-            // Normalize input with separate x/y ranges
-            let xNorm = (position.x - xMin) / (xMax - xMin || 1);
-            let yNorm = (position.y - yMin) / (yMax - yMin || 1);
+            // Normalize input to [-1, 1] with separate x/y ranges
+            let xNorm = 2 * (position.x - xMin) / (xMax - xMin || 1) - 1;
+            let yNorm = 2 * (position.y - yMin) / (yMax - yMin || 1) - 1;
             
             // Log when extrapolating outside training bounds
-            if (xNorm < 0 || xNorm > 1 || yNorm < 0 || yNorm > 1) {
+            if (xNorm < -1 || xNorm > 1 || yNorm < -1 || yNorm > 1) {
                 console.warn(`⚠️ Observer outside training bounds!`, {
                     position: { x: position.x.toFixed(2), y: position.y.toFixed(2) },
                     normalized: { x: xNorm.toFixed(4), y: yNorm.toFixed(4) },
@@ -404,10 +419,10 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 });
             }
             
-            // CRITICAL: Clamp to [0, 1] to prevent extrapolation outside training distribution
+            // CRITICAL: Clamp to [-1, 1] to prevent extrapolation outside training distribution
             // Neural networks behave unpredictably with out-of-range inputs
-            xNorm = Math.max(0, Math.min(1, xNorm));
-            yNorm = Math.max(0, Math.min(1, yNorm));
+            xNorm = Math.max(-1, Math.min(1, xNorm));
+            yNorm = Math.max(-1, Math.min(1, yNorm));
             
             // Apply Fourier encoding
             const fourierFeatures = this.fourierEncode(xNorm, yNorm, 6);
@@ -471,10 +486,10 @@ export class VisibilNetTrainingWindow extends HTMLElement {
 
             const { xMin, xMax, yMin, yMax, dMin, dMax } = this.normalizationParams;
 
-            // Normalize with existing params and apply Fourier encoding
+            // Normalize to [-1, 1] with existing params and apply Fourier encoding
             const xsNorm = xs.map(([x, y]) => {
-                const xNorm = (x - xMin) / (xMax - xMin || 1);
-                const yNorm = (y - yMin) / (yMax - yMin || 1);
+                const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
+                const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
                 return this.fourierEncode(xNorm, yNorm, 6);
             });
             const ysNorm = ys.map(distances => 
@@ -485,8 +500,9 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const xTensor = tf.tensor2d(xsNorm);
             const yTensor = tf.tensor2d(ysNorm);
 
-            // Continue training for another 500 epochs
-            const additionalEpochs = 500;
+            // Continue training for specified epochs
+            const epochInput = this.shadowRoot.querySelector('#epochInput');
+            const additionalEpochs = epochInput ? parseInt(epochInput.value) : 500;
             const initialLR = 0.001;
             const minLR = 0.0001;
             const statusDiv = this.shadowRoot.querySelector('#trainingStatus');
@@ -609,6 +625,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                     const data = JSON.parse(event.target.result);
                     if (Array.isArray(data) && data.length > 0) {
                         this.trainingData = data;
+                        this.fullTrainingData = [...data];
+                        this.updateFilterInputsFromData();
                         this.updateDataCount();
                         this.updateTrainingStatus(`Loaded ${data.length} samples`);
                         
@@ -674,7 +692,11 @@ export class VisibilNetTrainingWindow extends HTMLElement {
     updateDataCount() {
         const dataCount = this.shadowRoot.querySelector('#dataCount');
         if (dataCount) {
-            dataCount.textContent = `Data samples: ${this.trainingData.length}`;
+            if (this.fullTrainingData && this.fullTrainingData.length > this.trainingData.length) {
+                dataCount.textContent = `Data samples: ${this.trainingData.length} (Filtered from ${this.fullTrainingData.length})`;
+            } else {
+                dataCount.textContent = `Data samples: ${this.trainingData.length}`;
+            }
         }
     }
 
@@ -797,28 +819,33 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const display = this.shadowRoot.querySelector('#normalizedValues');
         if (!display) return;
         
+        // Use full dataset for normalization reference if available
+        const dataForBounds = (this.fullTrainingData && this.fullTrainingData.length > 0) 
+            ? this.fullTrainingData 
+            : this.trainingData;
+
         // If we have training data, use its min/max for normalization (like in actual training)
-        if (this.trainingData.length > 0) {
+        if (dataForBounds.length > 0) {
             // Calculate min/max from training data (same as in trainModel)
             let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-            for (const sample of this.trainingData) {
+            for (const sample of dataForBounds) {
                 xMin = Math.min(xMin, sample.x);
                 xMax = Math.max(xMax, sample.x);
                 yMin = Math.min(yMin, sample.y);
                 yMax = Math.max(yMax, sample.y);
             }
             
-            // Normalize position using training data bounds
-            const xNorm = (position.x - xMin) / (xMax - xMin || 1);
-            const yNorm = (position.y - yMin) / (yMax - yMin || 1);
+            // Normalize position to [-1, 1] using training data bounds
+            const xNorm = 2 * (position.x - xMin) / (xMax - xMin || 1) - 1;
+            const yNorm = 2 * (position.y - yMin) / (yMax - yMin || 1) - 1;
             
             // Check if outside training bounds
             const isOutsideBounds = position.x < xMin || position.x > xMax || 
                                    position.y < yMin || position.y > yMax;
             
-            // Clamp to [0, 1] like in prediction
-            const xNormClamped = Math.max(0, Math.min(1, xNorm));
-            const yNormClamped = Math.max(0, Math.min(1, yNorm));
+            // Clamp to [-1, 1] like in prediction
+            const xNormClamped = Math.max(-1, Math.min(1, xNorm));
+            const yNormClamped = Math.max(-1, Math.min(1, yNorm));
             
             // Apply Fourier encoding like in training
             const fourierFeatures = this.fourierEncode(xNormClamped, yNormClamped, 6);
@@ -844,8 +871,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 const trainedXMax = this.normalizationParams.xMax;
                 const trainedYMin = this.normalizationParams.yMin;
                 const trainedYMax = this.normalizationParams.yMax;
-                const trainedXNorm = (position.x - trainedXMin) / (trainedXMax - trainedXMin || 1);
-                const trainedYNorm = (position.y - trainedYMin) / (trainedYMax - trainedYMin || 1);
+                const trainedXNorm = 2 * (position.x - trainedXMin) / (trainedXMax - trainedXMin || 1) - 1;
+                const trainedYNorm = 2 * (position.y - trainedYMin) / (trainedYMax - trainedYMin || 1) - 1;
                 
                 const boundsMatch = (Math.abs(xMin - trainedXMin) < 0.01 && Math.abs(xMax - trainedXMax) < 0.01 && 
                                    Math.abs(yMin - trainedYMin) < 0.01 && Math.abs(yMax - trainedYMax) < 0.01);
@@ -885,6 +912,65 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                     <div style="font-style: italic;">ℹ️ Generate training data first to see normalized values</div>
                 </div>
             `;
+        }
+    }
+
+    updateFilterInputsFromData() {
+        if (this.fullTrainingData.length === 0) return;
+
+        let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+        for (const sample of this.fullTrainingData) {
+            xMin = Math.min(xMin, sample.x);
+            xMax = Math.max(xMax, sample.x);
+            yMin = Math.min(yMin, sample.y);
+            yMax = Math.max(yMax, sample.y);
+        }
+
+        const xMinInput = this.shadowRoot.querySelector('#xMinInput');
+        const xMaxInput = this.shadowRoot.querySelector('#xMaxInput');
+        const yMinInput = this.shadowRoot.querySelector('#yMinInput');
+        const yMaxInput = this.shadowRoot.querySelector('#yMaxInput');
+
+        if (xMinInput) xMinInput.value = Math.floor(xMin);
+        if (xMaxInput) xMaxInput.value = Math.ceil(xMax);
+        if (yMinInput) yMinInput.value = Math.floor(yMin);
+        if (yMaxInput) yMaxInput.value = Math.ceil(yMax);
+    }
+
+    applyDataFilter() {
+        if (this.fullTrainingData.length === 0) return;
+
+        const xMin = parseFloat(this.shadowRoot.querySelector('#xMinInput').value);
+        const xMax = parseFloat(this.shadowRoot.querySelector('#xMaxInput').value);
+        const yMin = parseFloat(this.shadowRoot.querySelector('#yMinInput').value);
+        const yMax = parseFloat(this.shadowRoot.querySelector('#yMaxInput').value);
+
+        this.trainingData = this.fullTrainingData.filter(d => 
+            d.x >= xMin && d.x <= xMax && d.y >= yMin && d.y <= yMax
+        );
+
+        this.updateDataCount();
+        this.updateTrainingStatus(`Filtered to ${this.trainingData.length} samples`);
+        
+        // Update display if active
+        if (this.displaySamples) {
+            this.displaySamples = false; // Toggle off then on to refresh
+            this.toggleDisplaySamples();
+        }
+    }
+
+    resetDataFilter() {
+        if (this.fullTrainingData.length === 0) return;
+        
+        this.trainingData = [...this.fullTrainingData];
+        this.updateFilterInputsFromData();
+        this.updateDataCount();
+        this.updateTrainingStatus(`Reset to full dataset (${this.trainingData.length} samples)`);
+        
+        // Update display if active
+        if (this.displaySamples) {
+            this.displaySamples = false;
+            this.toggleDisplaySamples();
         }
     }
 
@@ -1055,7 +1141,41 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                     </md-outlined-button>
                     
                     <div class="training-section">
+                        <div class="section-title">Data Selection</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                            <div>
+                                <label style="font-size: 0.7rem; display: block; color: rgba(0,0,0,0.6);">X Min</label>
+                                <input type="number" id="xMinInput" style="width: 100%; padding: 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.7rem; display: block; color: rgba(0,0,0,0.6);">X Max</label>
+                                <input type="number" id="xMaxInput" style="width: 100%; padding: 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.7rem; display: block; color: rgba(0,0,0,0.6);">Y Min</label>
+                                <input type="number" id="yMinInput" style="width: 100%; padding: 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.7rem; display: block; color: rgba(0,0,0,0.6);">Y Max</label>
+                                <input type="number" id="yMaxInput" style="width: 100%; padding: 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px;">
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                            <md-outlined-button id="applyFilter" class="tool-button" style="flex: 1; margin-bottom: 0;">
+                                <md-icon slot="icon">filter_alt</md-icon>
+                                Filter
+                            </md-outlined-button>
+                            <md-outlined-button id="resetFilter" class="tool-button" style="flex: 1; margin-bottom: 0;">
+                                <md-icon slot="icon">restart_alt</md-icon>
+                                Reset
+                            </md-outlined-button>
+                        </div>
+
                         <div class="section-title">Neural Network Training</div>
+                        <div style="margin-bottom: 12px;">
+                            <label style="font-size: 0.8rem; font-weight: 500;">Epochs:</label>
+                            <input type="number" id="epochInput" value="1000" min="10" step="10" style="width: 80px; padding: 4px; border: 1px solid rgba(0,0,0,0.2); border-radius: 4px; margin-left: 8px;">
+                        </div>
                         <md-filled-tonal-button id="generateData" class="tool-button">
                             <md-icon slot="icon">grid_on</md-icon>
                             Generate Training Data
