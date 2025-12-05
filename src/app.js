@@ -34,6 +34,7 @@ import './components/EvaderFutureSetWindow.js';
 import './components/VisibilityWindow.js';
 import './components/RRTWindow.js';
 import './components/VisibilNetTrainingWindow.js';
+import './components/KiloVisiNetTrainingWindow.js';
 import { ActiveTrackingWindow } from './components/ActiveTrackingWindow.js';
 import { RealTimeTrackingWindow } from './components/RealTimeTrackingWindow.js';
 
@@ -48,6 +49,7 @@ import { EvaderFutureSetService } from './services/EvaderFutureSetService.js';
 import { IntruderService } from './services/IntruderService.js';
 import { SensorModelService } from './services/SensorModelService.js';
 import { visibilnetService } from './services/VisibilNetService.js';
+import { kilovisinetService } from './services/KiloVisiNetService.js';
 import { activeTrackingService } from './services/ActiveTrackingService.js';
 import { realTimeTrackingService } from './services/RealTimeTrackingService.js';
 import { eventBus } from './utils/EventBus.js';
@@ -72,6 +74,7 @@ class App {
         this.evaderFutureSetWindow = null;
         this.visibilityWindow = null;
         this.visibilnetWindow = null;
+        this.kilovisinetWindow = null;
         this.rrtWindow = null;
         this.activeTrackingWindow = null;
         this.realTimeTrackingWindow = null;
@@ -132,6 +135,12 @@ class App {
         this.visibilnetWindow = document.createElement('visibilnet-training-window');
         document.body.appendChild(this.visibilnetWindow);
         console.log('VisibilNet Training window created and appended:', this.visibilnetWindow);
+
+        // Initialize KiloVisiNet Training window
+        console.log('Creating KiloVisiNet Training window...');
+        this.kilovisinetWindow = document.createElement('kilovisinet-training-window');
+        document.body.appendChild(this.kilovisinetWindow);
+        console.log('KiloVisiNet Training window created and appended:', this.kilovisinetWindow);
 
         // Initialize RRT window
         console.log('Creating RRT window...');
@@ -264,6 +273,18 @@ class App {
         eventBus.on('action:import', (file) => this.handleImport(file));
         
         // Other actions
+        eventBus.on('action:duplicateSelected', () => {
+            this.canvasController.duplicateSelected();
+            this.updateObstaclesForAllServices(); // Update obstacles after duplicating
+        });
+        eventBus.on('action:rotateSelected', () => {
+            this.canvasController.rotateSelected(15); // Rotate by 15 degrees
+            this.updateObstaclesForAllServices(); // Update obstacles after rotating
+        });
+        eventBus.on('action:rotateEnvironment180', () => {
+            this.canvasController.rotateEnvironment180();
+            this.updateObstaclesForAllServices(); // Update obstacles after rotating environment
+        });
         eventBus.on('action:deleteSelected', () => {
             this.canvasController.deleteSelected();
             this.updateObstaclesForAllServices(); // Update obstacles after deleting
@@ -281,6 +302,7 @@ class App {
         // Visibility actions
         eventBus.on('action:visibilityAnalysis', () => this.showVisibilityWindow());
         eventBus.on('action:visibilnetTraining', () => this.showVisibilNetWindow());
+        eventBus.on('action:kilovisinetTraining', () => this.showKiloVisiNetWindow());
 
         // RRT tracking actions
         eventBus.on('action:rrtTracking', () => this.showRRTWindow());
@@ -839,6 +861,19 @@ class App {
         } else {
             console.error('VisibilNet window not initialized');
             alert('VisibilNet window not initialized. Please refresh the page.');
+        }
+    }
+
+    showKiloVisiNetWindow() {
+        if (this.kilovisinetWindow) {
+            try {
+                this.kilovisinetWindow.show();
+            } catch (error) {
+                console.error('Error showing KiloVisiNet window:', error);
+            }
+        } else {
+            console.error('KiloVisiNet window not initialized');
+            alert('KiloVisiNet window not initialized. Please refresh the page.');
         }
     }
 

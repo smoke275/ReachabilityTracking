@@ -22,6 +22,13 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         this.lossHistory = [];
         this.valLossHistory = [];
         this.displaySamples = false;
+        this.replayBuffer = null; // TensorFlow tensors for efficient sampling
+        this.valBuffer = null;
+        this.bufferSize = 0;
+        this.valBufferSize = 0;
+        this.priorities = null; // Per-sample priorities for hard example mining
+        this.priorityAlpha = 0.6; // How much to prioritize (0=uniform, 1=full priority)
+        this.priorityBeta = 0.4; // Importance sampling correction (starts low, anneals to 1)
     }
 
     connectedCallback() {
@@ -68,6 +75,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             this.trainingData = [];
             this.fullTrainingData = [];
             this.displaySamples = false;
+            this.disposeBuffers();
             this.updateDataCount();
             const displayBtn = this.shadowRoot.querySelector('#displaySamples');
             if (displayBtn) {
@@ -240,7 +248,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         }
 
         this.isTraining = true;
-        this.updateTrainingStatus('Training model...');
+        this.updateTrainingStatus('Preparing replay buffer...');
 
         try {
             // Dynamically import TensorFlow.js
@@ -248,11 +256,10 @@ export class VisibilNetTrainingWindow extends HTMLElement {
 
             // Prepare training data
             const xs = this.trainingData.map(d => [d.x, d.y]);
-            const ys = this.trainingData.map(d => d.distances); // Array of distance arrays
+            const ys = this.trainingData.map(d => d.distances);
             const outputSize = ys[0].length; // Number of rays
 
-            // Normalize inputs (min-max normalization) - separate for x and y
-            // Use full dataset for normalization if available to maintain consistent scale
+            // Calculate normalization params from full dataset
             const normalizationSource = (this.fullTrainingData && this.fullTrainingData.length > 0) 
                 ? this.fullTrainingData 
                 : this.trainingData;
@@ -265,16 +272,16 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 yMax = Math.max(yMax, sample.y);
             }
             
-            // Normalize to [-1, 1] then apply Fourier encoding
+            // Normalize and encode all data
             const xsNorm = xs.map(([x, y]) => {
                 const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
                 const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
-                return this.fourierEncode(xNorm, yNorm, 6); // 6 frequencies = 24 features
+                return this.fourierEncode(xNorm, yNorm, 6); // 24 features
             });
             
-            const inputSize = xsNorm[0].length; // 24 features
+            const inputSize = xsNorm[0].length;
 
-            // Normalize outputs (distances) without flattening - iterate to avoid stack overflow
+            // Normalize outputs
             let dMin = Infinity, dMax = -Infinity;
             for (const sample of normalizationSource) {
                 for (const d of sample.distances) {
@@ -286,98 +293,173 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 distances.map(d => (d - dMin) / (dMax - dMin))
             );
 
-            // Create tensors
-            const xTensor = tf.tensor2d(xsNorm);
-            const yTensor = tf.tensor2d(ysNorm);
+            // Store normalization params
+            this.normalizationParams = { xMin, xMax, yMin, yMax, dMin, dMax };
 
-            // Create larger model with Fourier features (24 input dimensions)
-            // Architecture: 24 → 256 → 512 → 512 → 256 → outputSize
+            // Split into train/val (85/15 split like NeRF)
+            const valSplit = 0.15;
+            const numVal = Math.floor(xsNorm.length * valSplit);
+            const numTrain = xsNorm.length - numVal;
+            
+            // Shuffle indices
+            const indices = Array.from({ length: xsNorm.length }, (_, i) => i);
+            for (let i = indices.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [indices[i], indices[j]] = [indices[j], indices[i]];
+            }
+            
+            // Split data
+            const trainIndices = indices.slice(0, numTrain);
+            const valIndices = indices.slice(numTrain);
+            
+            const xTrain = trainIndices.map(i => xsNorm[i]);
+            const yTrain = trainIndices.map(i => ysNorm[i]);
+            const xVal = valIndices.map(i => xsNorm[i]);
+            const yVal = valIndices.map(i => ysNorm[i]);
+
+            // Create replay buffers (keep as tensors for efficient sampling)
+            this.disposeBuffers();
+            this.replayBuffer = {
+                x: tf.tensor2d(xTrain),
+                y: tf.tensor2d(yTrain)
+            };
+            this.valBuffer = {
+                x: tf.tensor2d(xVal),
+                y: tf.tensor2d(yVal)
+            };
+            this.bufferSize = numTrain;
+            this.valBufferSize = numVal;
+            
+            // Initialize priorities uniformly (will be updated during training)
+            this.priorities = new Float32Array(numTrain).fill(1.0);
+
+            // Create model
             const initialLR = 0.003;
             this.model = tf.sequential({
                 layers: [
-                    tf.layers.dense({ inputShape: [inputSize], units: 256, activation: 'elu' }),
-                    tf.layers.dense({ units: 512, activation: 'elu' }),
-                    tf.layers.dense({ units: 512, activation: 'elu' }),
-                    tf.layers.dense({ units: 256, activation: 'elu' }),
-                    tf.layers.dense({ units: outputSize, activation: 'relu' }) // ReLU ensures distances >= 0
+                    tf.layers.dense({ inputShape: [inputSize], units: 256, activation: 'swish' }),
+                    tf.layers.dense({ units: 512, activation: 'swish' }),
+                    tf.layers.dense({ units: 512, activation: 'swish' }),
+                    tf.layers.dense({ units: 256, activation: 'swish' }),
+                    tf.layers.dense({ units: outputSize, activation: 'relu' })
                 ]
             });
 
-            // Compile model with initial learning rate
+            // Compile model
             this.model.compile({
                 optimizer: tf.train.adam(initialLR),
                 loss: 'meanSquaredError',
                 metrics: ['mae']
             });
             
-            // Display architecture info
             const modelInfo = this.shadowRoot.querySelector('#modelInfo');
-            modelInfo.textContent = `Arch: ${inputSize}→256→512→512→256→${outputSize}(relu) | Init LR: ${initialLR} | Fourier Features`;
+            modelInfo.textContent = `Arch: ${inputSize}→256→512→512→256→${outputSize} | LR: ${initialLR} | Buffer: ${this.bufferSize} train, ${this.valBufferSize} val`;
 
-            // Train model with cosine annealing learning rate
+            // Train with replay buffer sampling (NeRF-style)
             const epochInput = this.shadowRoot.querySelector('#epochInput');
             const epochs = epochInput ? parseInt(epochInput.value) : 1000;
+            const batchSize = 256; // Fixed batch size for minibatch sampling
             const minLR = 0.0001;
             const statusDiv = this.shadowRoot.querySelector('#trainingStatus');
             const canvas = this.shadowRoot.querySelector('#lossGraph');
             
-            // Reset and show loss graph
             this.lossHistory = [];
             this.valLossHistory = [];
             if (canvas) canvas.style.display = 'block';
-            
-            await this.model.fit(xTensor, yTensor, {
-                epochs: epochs,
-                batchSize: Math.min(128, this.trainingData.length), // Larger batch with more data
-                validationSplit: 0.15,
-                shuffle: true,
-                verbose: 0,
-                callbacks: {
-                    onEpochEnd: (epoch, logs) => {
-                        // Cosine annealing learning rate schedule
-                        const cosineDecay = minLR + 0.5 * (initialLR - minLR) * (1 + Math.cos(Math.PI * epoch / epochs));
-                        tf.train.adam(cosineDecay); // Update optimizer LR
-                        
-                        // Track loss history
-                        this.lossHistory.push(logs.loss);
-                        this.valLossHistory.push(logs.val_loss);
-                        
-                        // Enable AI prediction after first epoch
-                        if (epoch === 0) {
-                            // Store normalization params early so prediction can work
-                            this.normalizationParams = { xMin, xMax, yMin, yMax, dMin, dMax };
-                            const toggleBtn = this.shadowRoot.querySelector('#togglePrediction');
-                            if (toggleBtn) toggleBtn.removeAttribute('disabled');
-                        }
-                        
-                        // Update every 10 epochs for progress visibility
-                        if (epoch % 10 === 0 || epoch === epochs - 1) {
-                            statusDiv.textContent = `Epoch ${epoch}/${epochs} | Loss: ${logs.loss.toFixed(6)} | Val: ${logs.val_loss.toFixed(6)} | LR: ${cosineDecay.toFixed(6)}`;
-                            this.drawLossGraph();
-                        }
-                        
-                        // If AI prediction is enabled, update visualization every 5 epochs for live feedback
-                        if (this.useModelPrediction && epoch % 5 === 0) {
-                            eventBus.emit('visibilnet:requestObserverPosition', (observerPos) => {
-                                if (observerPos) {
-                                    this.predictAndUpdateRays(observerPos);
-                                }
-                            });
-                        }
-                    }
+
+            this.updateTrainingStatus('Training with replay buffer...');
+
+            // NeRF-style training loop with prioritized sampling
+            for (let epoch = 0; epoch < epochs; epoch++) {
+                // Cosine annealing LR
+                const lr = minLR + 0.5 * (initialLR - minLR) * (1 + Math.cos(Math.PI * epoch / epochs));
+                this.model.optimizer.learningRate = lr;
+                
+                // Anneal beta for importance sampling correction (0.4 -> 1.0)
+                this.priorityBeta = 0.4 + (1.0 - 0.4) * (epoch / epochs);
+                
+                // Prioritized sampling: sample proportional to priority^alpha
+                const batchIndices = this.samplePrioritizedBatch(batchSize);
+                
+                // Gather batch (using tf.gather for efficiency)
+                const batchX = tf.gather(this.replayBuffer.x, batchIndices);
+                const batchY = tf.gather(this.replayBuffer.y, batchIndices);
+                
+                // Compute per-sample losses for priority updates
+                const predictions = this.model.predict(batchX);
+                const losses = tf.tidy(() => {
+                    const diff = tf.sub(predictions, batchY);
+                    const squared = tf.square(diff);
+                    return tf.mean(squared, 1); // Per-sample MSE
+                });
+                const lossValues = await losses.array();
+                
+                // Train on batch
+                const history = await this.model.fit(batchX, batchY, {
+                    epochs: 1,
+                    verbose: 0,
+                    shuffle: false
+                });
+                
+                // Update priorities based on loss (hard example mining)
+                for (let i = 0; i < batchIndices.length; i++) {
+                    const idx = batchIndices[i];
+                    // Priority = |loss| + small epsilon to avoid zero priority
+                    this.priorities[idx] = Math.abs(lossValues[i]) + 1e-6;
                 }
-            });
-
-            // Store normalization params (separate for x and y)
-            this.normalizationParams = { xMin, xMax, yMin, yMax, dMin, dMax };
-
-            // Clean up tensors
-            xTensor.dispose();
-            yTensor.dispose();
+                
+                const trainLoss = history.history.loss[0];
+                this.lossHistory.push(trainLoss);
+                
+                // Clean up
+                predictions.dispose();
+                losses.dispose();
+                
+                // Validate every 10 epochs
+                let valLoss = null;
+                if (epoch % 10 === 0 || epoch === epochs - 1) {
+                    const valPred = this.model.predict(this.valBuffer.x);
+                    const valLossTensor = tf.losses.meanSquaredError(this.valBuffer.y, valPred);
+                    valLoss = await valLossTensor.data();
+                    this.valLossHistory.push(valLoss[0]);
+                    valLossTensor.dispose();
+                    valPred.dispose();
+                }
+                
+                // Clean up batch tensors
+                batchX.dispose();
+                batchY.dispose();
+                
+                // Enable prediction after first epoch
+                if (epoch === 0) {
+                    const toggleBtn = this.shadowRoot.querySelector('#togglePrediction');
+                    if (toggleBtn) toggleBtn.removeAttribute('disabled');
+                }
+                
+                // Update UI
+                if (epoch % 10 === 0 || epoch === epochs - 1) {
+                    const valText = valLoss ? ` | Val: ${valLoss[0].toFixed(6)}` : '';
+                    const avgPriority = this.priorities.reduce((a, b) => a + b, 0) / this.priorities.length;
+                    statusDiv.textContent = `Epoch ${epoch}/${epochs} | Loss: ${trainLoss.toFixed(6)}${valText} | LR: ${lr.toFixed(6)} | Priority: ${avgPriority.toFixed(4)}`;
+                    this.drawLossGraph();
+                }
+                
+                // Live feedback
+                if (this.useModelPrediction && epoch % 20 === 0) {
+                    eventBus.emit('visibilnet:requestObserverPosition', (observerPos) => {
+                        if (observerPos) this.predictAndUpdateRays(observerPos);
+                    });
+                }
+                
+                // Allow UI updates
+                if (epoch % 50 === 0) {
+                    await tf.nextFrame();
+                }
+            }
 
             this.updateTrainingStatus('Model trained successfully!');
             
-            // Enable prediction toggle, save model, and continue training buttons
+            // Enable buttons
             const toggleBtn = this.shadowRoot.querySelector('#togglePrediction');
             if (toggleBtn) {
                 toggleBtn.removeAttribute('disabled');
@@ -459,18 +541,29 @@ export class VisibilNetTrainingWindow extends HTMLElement {
     }
 
     async continueTraining() {
-        if (!this.model || !this.trainingData || this.trainingData.length < 5) {
-            this.updateTrainingStatus('No model or data to continue training');
+        if (!this.model) {
+            this.updateTrainingStatus('No model found. Train or load a model first.');
+            return;
+        }
+
+        // If no replay buffer but we have training data, recreate the buffer
+        if ((!this.replayBuffer || this.bufferSize === 0) && this.trainingData.length > 0) {
+            this.updateTrainingStatus('Recreating replay buffer from training data...');
+            await this.createReplayBuffer();
+        }
+
+        if (!this.replayBuffer || this.bufferSize === 0) {
+            this.updateTrainingStatus('No training data. Generate or load data first.');
             return;
         }
 
         this.isTraining = true;
-        this.updateTrainingStatus('Continuing training...');
+        this.updateTrainingStatus('Continuing training with replay buffer...');
 
         try {
             const tf = await import('@tensorflow/tfjs');
 
-            // Compile model if not already compiled (e.g., after loading from file)
+            // Compile model if not already compiled
             if (!this.model.optimizer) {
                 const learningRate = 0.001;
                 this.model.compile({
@@ -480,72 +573,90 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 });
             }
 
-            // Prepare training data (reuse existing normalization params)
-            const xs = this.trainingData.map(d => [d.x, d.y]);
-            const ys = this.trainingData.map(d => d.distances);
-
-            const { xMin, xMax, yMin, yMax, dMin, dMax } = this.normalizationParams;
-
-            // Normalize to [-1, 1] with existing params and apply Fourier encoding
-            const xsNorm = xs.map(([x, y]) => {
-                const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
-                const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
-                return this.fourierEncode(xNorm, yNorm, 6);
-            });
-            const ysNorm = ys.map(distances => 
-                distances.map(d => (d - dMin) / (dMax - dMin))
-            );
-
-            // Create tensors
-            const xTensor = tf.tensor2d(xsNorm);
-            const yTensor = tf.tensor2d(ysNorm);
-
-            // Continue training for specified epochs
             const epochInput = this.shadowRoot.querySelector('#epochInput');
             const additionalEpochs = epochInput ? parseInt(epochInput.value) : 500;
+            const batchSize = 256;
             const initialLR = 0.001;
             const minLR = 0.0001;
             const statusDiv = this.shadowRoot.querySelector('#trainingStatus');
             const canvas = this.shadowRoot.querySelector('#lossGraph');
             
-            // Show graph if hidden
             if (canvas) canvas.style.display = 'block';
             
-            await this.model.fit(xTensor, yTensor, {
-                epochs: additionalEpochs,
-                batchSize: Math.min(128, this.trainingData.length),
-                validationSplit: 0.15,
-                shuffle: true,
-                verbose: 0,
-                callbacks: {
-                    onEpochEnd: (epoch, logs) => {
-                        // Cosine annealing for continue training
-                        const cosineDecay = minLR + 0.5 * (initialLR - minLR) * (1 + Math.cos(Math.PI * epoch / additionalEpochs));
-                        
-                        // Append to existing loss history
-                        this.lossHistory.push(logs.loss);
-                        this.valLossHistory.push(logs.val_loss);
-                        
-                        if (epoch % 10 === 0 || epoch === additionalEpochs - 1) {
-                            statusDiv.textContent = `Continue +${epoch}/${additionalEpochs} | Loss: ${logs.loss.toFixed(6)} | Val: ${logs.val_loss.toFixed(6)}`;
-                            this.drawLossGraph();
-                        }
-                        
-                        // If AI prediction is enabled, update visualization every 5 epochs
-                        if (this.useModelPrediction && epoch % 5 === 0) {
-                            eventBus.emit('visibilnet:requestObserverPosition', (observerPos) => {
-                                if (observerPos) {
-                                    this.predictAndUpdateRays(observerPos);
-                                }
-                            });
-                        }
-                    }
+            const startEpoch = this.lossHistory.length;
+            
+            // Continue training loop with prioritized sampling
+            for (let epoch = 0; epoch < additionalEpochs; epoch++) {
+                const lr = minLR + 0.5 * (initialLR - minLR) * (1 + Math.cos(Math.PI * epoch / additionalEpochs));
+                this.model.optimizer.learningRate = lr;
+                
+                // Anneal beta
+                this.priorityBeta = 0.4 + (1.0 - 0.4) * (epoch / additionalEpochs);
+                
+                // Prioritized sampling
+                const batchIndices = this.samplePrioritizedBatch(batchSize);
+                
+                const batchX = tf.gather(this.replayBuffer.x, batchIndices);
+                const batchY = tf.gather(this.replayBuffer.y, batchIndices);
+                
+                // Compute per-sample losses for priority updates
+                const predictions = this.model.predict(batchX);
+                const losses = tf.tidy(() => {
+                    const diff = tf.sub(predictions, batchY);
+                    const squared = tf.square(diff);
+                    return tf.mean(squared, 1);
+                });
+                const lossValues = await losses.array();
+                
+                const history = await this.model.fit(batchX, batchY, {
+                    epochs: 1,
+                    verbose: 0,
+                    shuffle: false
+                });
+                
+                // Update priorities
+                for (let i = 0; i < batchIndices.length; i++) {
+                    const idx = batchIndices[i];
+                    this.priorities[idx] = Math.abs(lossValues[i]) + 1e-6;
                 }
-            });
-
-            // Clean up tensors
-            xTensor.dispose();
-            yTensor.dispose();
+                
+                const trainLoss = history.history.loss[0];
+                this.lossHistory.push(trainLoss);
+                
+                predictions.dispose();
+                losses.dispose();
+                
+                // Validate periodically
+                let valLoss = null;
+                if (epoch % 10 === 0 || epoch === additionalEpochs - 1) {
+                    const valPred = this.model.predict(this.valBuffer.x);
+                    const valLossTensor = tf.losses.meanSquaredError(this.valBuffer.y, valPred);
+                    valLoss = await valLossTensor.data();
+                    this.valLossHistory.push(valLoss[0]);
+                    valLossTensor.dispose();
+                    valPred.dispose();
+                }
+                
+                batchX.dispose();
+                batchY.dispose();
+                
+                if (epoch % 10 === 0 || epoch === additionalEpochs - 1) {
+                    const valText = valLoss ? ` | Val: ${valLoss[0].toFixed(6)}` : '';
+                    const avgPriority = this.priorities ? this.priorities.reduce((a, b) => a + b, 0) / this.priorities.length : 1.0;
+                    statusDiv.textContent = `Continue +${epoch}/${additionalEpochs} | Loss: ${trainLoss.toFixed(6)}${valText} | LR: ${lr.toFixed(6)} | Priority: ${avgPriority.toFixed(4)}`;
+                    this.drawLossGraph();
+                }
+                
+                if (this.useModelPrediction && epoch % 20 === 0) {
+                    eventBus.emit('visibilnet:requestObserverPosition', (observerPos) => {
+                        if (observerPos) this.predictAndUpdateRays(observerPos);
+                    });
+                }
+                
+                if (epoch % 50 === 0) {
+                    await tf.nextFrame();
+                }
+            }
 
             this.updateTrainingStatus('Continued training complete!');
             this.isTraining = false;
@@ -698,6 +809,153 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 dataCount.textContent = `Data samples: ${this.trainingData.length}`;
             }
         }
+    }
+
+    disposeBuffers() {
+        if (this.replayBuffer) {
+            this.replayBuffer.x.dispose();
+            this.replayBuffer.y.dispose();
+            this.replayBuffer = null;
+        }
+        if (this.valBuffer) {
+            this.valBuffer.x.dispose();
+            this.valBuffer.y.dispose();
+            this.valBuffer = null;
+        }
+        this.bufferSize = 0;
+        this.valBufferSize = 0;
+        this.priorities = null;
+    }
+
+    async createReplayBuffer() {
+        if (this.trainingData.length < 5) {
+            this.updateTrainingStatus('Need at least 5 samples to create buffer');
+            return false;
+        }
+
+        try {
+            const tf = await import('@tensorflow/tfjs');
+
+            // Prepare training data
+            const xs = this.trainingData.map(d => [d.x, d.y]);
+            const ys = this.trainingData.map(d => d.distances);
+
+            // Use existing normalization params or calculate new ones
+            if (!this.normalizationParams) {
+                const normalizationSource = (this.fullTrainingData && this.fullTrainingData.length > 0) 
+                    ? this.fullTrainingData 
+                    : this.trainingData;
+
+                let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+                for (const sample of normalizationSource) {
+                    xMin = Math.min(xMin, sample.x);
+                    xMax = Math.max(xMax, sample.x);
+                    yMin = Math.min(yMin, sample.y);
+                    yMax = Math.max(yMax, sample.y);
+                }
+
+                let dMin = Infinity, dMax = -Infinity;
+                for (const sample of normalizationSource) {
+                    for (const d of sample.distances) {
+                        dMin = Math.min(dMin, d);
+                        dMax = Math.max(dMax, d);
+                    }
+                }
+
+                this.normalizationParams = { xMin, xMax, yMin, yMax, dMin, dMax };
+            }
+
+            const { xMin, xMax, yMin, yMax, dMin, dMax } = this.normalizationParams;
+
+            // Normalize and encode
+            const xsNorm = xs.map(([x, y]) => {
+                const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
+                const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
+                return this.fourierEncode(xNorm, yNorm, 6);
+            });
+
+            const ysNorm = ys.map(distances => 
+                distances.map(d => (d - dMin) / (dMax - dMin))
+            );
+
+            // Split into train/val
+            const valSplit = 0.15;
+            const numVal = Math.floor(xsNorm.length * valSplit);
+            const numTrain = xsNorm.length - numVal;
+
+            // Shuffle indices
+            const indices = Array.from({ length: xsNorm.length }, (_, i) => i);
+            for (let i = indices.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [indices[i], indices[j]] = [indices[j], indices[i]];
+            }
+
+            const trainIndices = indices.slice(0, numTrain);
+            const valIndices = indices.slice(numTrain);
+
+            const xTrain = trainIndices.map(i => xsNorm[i]);
+            const yTrain = trainIndices.map(i => ysNorm[i]);
+            const xVal = valIndices.map(i => xsNorm[i]);
+            const yVal = valIndices.map(i => ysNorm[i]);
+
+            // Create replay buffers
+            this.disposeBuffers();
+            this.replayBuffer = {
+                x: tf.tensor2d(xTrain),
+                y: tf.tensor2d(yTrain)
+            };
+            this.valBuffer = {
+                x: tf.tensor2d(xVal),
+                y: tf.tensor2d(yVal)
+            };
+            this.bufferSize = numTrain;
+            this.valBufferSize = numVal;
+            
+            // Initialize priorities uniformly
+            this.priorities = new Float32Array(numTrain).fill(1.0);
+
+            return true;
+        } catch (error) {
+            console.error('Error creating replay buffer:', error);
+            this.updateTrainingStatus(`Buffer creation failed: ${error.message}`);
+            return false;
+        }
+    }
+
+    // Prioritized sampling for hard example mining
+    samplePrioritizedBatch(batchSize) {
+        if (!this.priorities || this.priorities.length === 0) {
+            // Fallback to uniform sampling if priorities not initialized
+            const indices = [];
+            for (let i = 0; i < batchSize; i++) {
+                indices.push(Math.floor(Math.random() * this.bufferSize));
+            }
+            return indices;
+        }
+        
+        // Compute sampling probabilities: P(i) = priority[i]^alpha / sum(priority^alpha)
+        const poweredPriorities = new Float32Array(this.priorities.length);
+        let sumPriorities = 0;
+        for (let i = 0; i < this.priorities.length; i++) {
+            poweredPriorities[i] = Math.pow(this.priorities[i], this.priorityAlpha);
+            sumPriorities += poweredPriorities[i];
+        }
+        
+        // Sample batch indices
+        const indices = [];
+        for (let i = 0; i < batchSize; i++) {
+            let rand = Math.random() * sumPriorities;
+            let cumSum = 0;
+            for (let j = 0; j < poweredPriorities.length; j++) {
+                cumSum += poweredPriorities[j];
+                if (rand <= cumSum) {
+                    indices.push(j);
+                    break;
+                }
+            }
+        }
+        
+        return indices;
     }
 
     // Fourier feature encoding for better spatial representation

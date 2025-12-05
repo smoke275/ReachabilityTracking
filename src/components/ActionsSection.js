@@ -16,9 +16,15 @@ export class ActionsSection extends HTMLElement {
     }
 
     setupEventListeners() {
+        const duplicateBtn = this.shadowRoot.querySelector('#duplicateSelected');
+        const rotateBtn = this.shadowRoot.querySelector('#rotateSelected');
+        const rotateEnvBtn = this.shadowRoot.querySelector('#rotateEnvironment180');
         const deleteBtn = this.shadowRoot.querySelector('#deleteSelected');
         const clearBtn = this.shadowRoot.querySelector('#clearCanvas');
 
+        duplicateBtn?.addEventListener('click', () => eventBus.emit('action:duplicateSelected'));
+        rotateBtn?.addEventListener('click', () => eventBus.emit('action:rotateSelected'));
+        rotateEnvBtn?.addEventListener('click', () => eventBus.emit('action:rotateEnvironment180'));
         deleteBtn?.addEventListener('click', () => eventBus.emit('action:deleteSelected'));
         clearBtn?.addEventListener('click', () => {
             if (confirm('Are you sure you want to clear all polygons?')) {
@@ -56,6 +62,21 @@ export class ActionsSection extends HTMLElement {
             
             <div class="toolbar-section">
                 <h3>Actions</h3>
+                <md-outlined-button id="duplicateSelected" class="tool-button">
+                    <md-icon slot="icon">content_copy</md-icon>
+                    Duplicate
+                </md-outlined-button>
+                
+                <md-outlined-button id="rotateSelected" class="tool-button">
+                    <md-icon slot="icon">rotate_right</md-icon>
+                    Rotate 15°
+                </md-outlined-button>
+                
+                <md-filled-button id="rotateEnvironment180" class="tool-button">
+                    <md-icon slot="icon">flip</md-icon>
+                    Flip Environment 180°
+                </md-filled-button>
+                
                 <md-outlined-button id="deleteSelected" class="tool-button">
                     <md-icon slot="icon">delete</md-icon>
                     Delete Selected

@@ -241,6 +241,114 @@ export class PolygonCanvasController {
             this.redraw();
         });
 
+        // KiloVisiNet training event listeners (grid-based)
+        eventBus.on('kilovisinet:setPlacementMode', (mode) => {
+            this.kilovisinet = this.kilovisinet || { isActive: false, observer: null, visibilityPoly: [], predictedVisibilityPoly: [], numRays: 36, activeDrag: null, cellBounds: [], showCellBounds: false };
+            this.kilovisinet.activeDrag = mode;
+            this.kilovisinet.isActive = true;
+        });
+        eventBus.on('kilovisinet:clear', () => {
+            if (this.kilovisinet) {
+                this.kilovisinet.observer = null;
+                this.kilovisinet.visibilityPoly = [];
+                this.kilovisinet.predictedVisibilityPoly = [];
+                this.kilovisinet.activeDrag = null;
+                this.kilovisinet.isActive = false;
+                this.kilovisinet.cellBounds = [];
+                this.kilovisinet.showCellBounds = false;
+            }
+            this.redraw();
+        });
+        eventBus.on('kilovisinet:updateRayCount', (numRays) => {
+            if (!this.kilovisinet) this.kilovisinet = { isActive: false, observer: null, visibilityPoly: [], predictedVisibilityPoly: [], numRays: 36, activeDrag: null, cellBounds: [], showCellBounds: false };
+            this.kilovisinet.numRays = numRays;
+            if (this.kilovisinet.observer) {
+                this.computeKiloVisiNetVisibility();
+            }
+        });
+        eventBus.on('kilovisinet:updateCellSize', (cellSize) => {
+            if (!this.kilovisinet) this.kilovisinet = { isActive: false, observer: null, visibilityPoly: [], predictedVisibilityPoly: [], numRays: 36, activeDrag: null, cellBounds: [], showCellBounds: false };
+            this.kilovisinet.cellSize = cellSize;
+            this.redraw();
+        });
+        eventBus.on('kilovisinet:computeVisibility', (data) => {
+            if (data.position) {
+                if (!this.kilovisinet) this.kilovisinet = { isActive: false, observer: null, visibilityPoly: [], predictedVisibilityPoly: [], numRays: 36, activeDrag: null, cellBounds: [], showCellBounds: false };
+                this.kilovisinet.observer = data.position;
+                this.kilovisinet.numRays = data.numRays || this.kilovisinet.numRays;
+                this.computeKiloVisiNetVisibility();
+            }
+        });
+        eventBus.on('kilovisinet:windowClosed', () => {
+            if (this.kilovisinet) {
+                this.kilovisinet.isActive = false;
+                this.kilovisinet.showCellBounds = false;
+            }
+            this.redraw();
+        });
+        eventBus.on('kilovisinet:requestObserverPosition', (callback) => {
+            if (typeof callback === 'function') {
+                callback(this.kilovisinet ? this.kilovisinet.observer : null);
+            }
+        });
+        eventBus.on('kilovisinet:requestEnvironment', (callback) => {
+            if (typeof callback === 'function') {
+                let bounds;
+                if (this.polygons && this.polygons.length > 0) {
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    this.polygons.forEach(poly => {
+                        poly.vertices.forEach(v => {
+                            minX = Math.min(minX, v.x);
+                            maxX = Math.max(maxX, v.x);
+                            minY = Math.min(minY, v.y);
+                            maxY = Math.max(maxY, v.y);
+                        });
+                    });
+                    const margin = 50;
+                    bounds = {
+                        minX: minX - margin,
+                        minY: minY - margin,
+                        maxX: maxX + margin,
+                        maxY: maxY + margin,
+                        width: (maxX - minX) + 2 * margin,
+                        height: (maxY - minY) + 2 * margin
+                    };
+                } else {
+                    bounds = this.getWorldViewBounds();
+                }
+                callback({
+                    polygons: this.polygons,
+                    bounds: bounds
+                });
+            }
+        });
+        eventBus.on('kilovisinet:setPredictedVisibility', (poly) => {
+            if (!this.kilovisinet) this.kilovisinet = { isActive: false, observer: null, visibilityPoly: [], predictedVisibilityPoly: [], numRays: 36, activeDrag: null, cellBounds: [], showCellBounds: false };
+            this.kilovisinet.predictedVisibilityPoly = poly;
+            console.log('Canvas: Setting KiloVisiNet predicted visibility with', poly.length, 'vertices');
+            this.redraw();
+        });
+        eventBus.on('kilovisinet:clearRegularVisibility', () => {
+            if (this.kilovisinet) {
+                this.kilovisinet.visibilityPoly = [];
+                console.log('Canvas: Cleared KiloVisiNet regular visibility');
+            }
+            this.redraw();
+        });
+        eventBus.on('kilovisinet:showCellBounds', (data) => {
+            if (!this.kilovisinet) this.kilovisinet = { isActive: false, observer: null, visibilityPoly: [], predictedVisibilityPoly: [], numRays: 36, activeDrag: null, cellBounds: [], showCellBounds: false };
+            this.kilovisinet.showCellBounds = true;
+            this.kilovisinet.cellSize = data.cellSize;
+            this.kilovisinet.gridCellKeys = data.gridCells || [];
+            this.redraw();
+        });
+        eventBus.on('kilovisinet:hideCellBounds', () => {
+            if (this.kilovisinet) {
+                this.kilovisinet.showCellBounds = false;
+            }
+            this.redraw();
+        });
+
         // Listen for RRT tree updates
         eventBus.on('rrt:treesBuilt', (data) => {
             this.rrtTrees.pursuer = data.pursuerTree;
@@ -422,12 +530,18 @@ export class PolygonCanvasController {
         // If visibility placement mode is active or clicking near existing point, handle that first
         const v = this.visibility;
         const vn = this.visibilnet;
+        const kvn = this.kilovisinet;
         // Use larger hit radius for observer (20 world units) for easier dragging
         const observerHitRadius = 20;
         const hit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= observerHitRadius*observerHitRadius;
         const regularHitRadius = 10;
         const regularHit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= regularHitRadius*regularHitRadius;
         if (e.button === 0) {
+            // Check KiloVisiNet observer hit first (if active) - use larger radius
+            if (kvn && kvn.isActive && hit(kvn.observer)) {
+                kvn.activeDrag = 'observer';
+                return;
+            }
             // Check VisibilNet observer hit first (if active) - use larger radius
             if (vn.isActive && hit(vn.observer)) {
                 vn.activeDrag = 'observer';
@@ -439,6 +553,14 @@ export class PolygonCanvasController {
             }
             if (regularHit(v.end)) {
                 v.activeDrag = 'end';
+                return;
+            }
+            // KiloVisiNet placement
+            if (kvn && kvn.activeDrag === 'observer') {
+                kvn.observer = { x: worldPos.x, y: worldPos.y };
+                this.computeKiloVisiNetVisibility();
+                eventBus.emit('kilovisinet:observerMoved', kvn.observer);
+                // keep activeDrag to allow dragging on this gesture
                 return;
             }
             // VisibilNet placement
@@ -540,6 +662,14 @@ export class PolygonCanvasController {
             return;
         }
 
+        // Drag KiloVisiNet observer
+        if (this.kilovisinet && this.kilovisinet.activeDrag === 'observer' && e.buttons & 1) {
+            this.kilovisinet.observer = { x: worldPos.x, y: worldPos.y };
+            this.computeKiloVisiNetVisibility();
+            eventBus.emit('kilovisinet:observerMoved', this.kilovisinet.observer);
+            return;
+        }
+
         if (this.isPanning) {
             // Pan based on screen space movement for more intuitive control
             const dx = (screenX - this.lastScreenPos.x) / this.camera.zoom;
@@ -573,6 +703,10 @@ export class PolygonCanvasController {
         // Stop dragging VisibilNet observer
         if (this.visibilnet.activeDrag === 'observer') {
             this.visibilnet.activeDrag = null;
+        }
+        // Stop dragging KiloVisiNet observer
+        if (this.kilovisinet && this.kilovisinet.activeDrag === 'observer') {
+            this.kilovisinet.activeDrag = null;
         }
         this.isDragging = false;
         this.isPanning = false;
@@ -691,6 +825,25 @@ export class PolygonCanvasController {
         this.redraw();
     }
 
+    computeKiloVisiNetVisibility() {
+        if (!this.kilovisinet || !this.kilovisinet.observer) return;
+        
+        const bounds = this.getWorldViewBounds();
+        const polygons = this.getPolygons();
+        
+        // Import and use KiloVisiNetService
+        import('../services/KiloVisiNetService.js').then(module => {
+            const service = module.kilovisinetService;
+            this.kilovisinet.visibilityPoly = service.computeRayBasedVisibility(
+                this.kilovisinet.observer,
+                polygons,
+                bounds,
+                this.kilovisinet.numRays
+            );
+            this.redraw();
+        });
+    }
+
     addPolygon(polygon) {
         this.polygons.push(polygon);
         this.redraw();
@@ -768,6 +921,76 @@ export class PolygonCanvasController {
         return vertices;
     }
 
+    selectPolygon(polygon) {
+        if (this.selectedPolygon) {
+            this.selectedPolygon.selected = false;
+        }
+        this.selectedPolygon = polygon;
+        polygon.selected = true;
+        this.redraw();
+        eventBus.emit('polygon:selected', polygon);
+    }
+
+    deselectPolygon() {
+        if (this.selectedPolygon) {
+            this.selectedPolygon.selected = false;
+            this.selectedPolygon = null;
+            this.redraw();
+            eventBus.emit('polygon:deselected');
+        }
+    }
+
+    duplicateSelected() {
+        if (this.selectedPolygon) {
+            // Create a copy of the vertices, offset by 30 units
+            const offset = 30;
+            const newVertices = this.selectedPolygon.vertices.map(v => ({
+                x: v.x + offset,
+                y: v.y + offset
+            }));
+            
+            const newPolygon = new Polygon(
+                newVertices,
+                this.selectedPolygon.color,
+                this.selectedPolygon.strokeColor
+            );
+            
+            this.addPolygon(newPolygon);
+            this.selectPolygon(newPolygon);
+            eventBus.emit('polygon:duplicated');
+            this.recomputeVisibilityIfNeeded();
+        }
+    }
+
+    rotateSelected(angleDegrees = 15) {
+        if (this.selectedPolygon) {
+            // Calculate centroid
+            const centroid = {
+                x: this.selectedPolygon.vertices.reduce((sum, v) => sum + v.x, 0) / this.selectedPolygon.vertices.length,
+                y: this.selectedPolygon.vertices.reduce((sum, v) => sum + v.y, 0) / this.selectedPolygon.vertices.length
+            };
+            
+            // Convert angle to radians
+            const angleRad = (angleDegrees * Math.PI) / 180;
+            const cos = Math.cos(angleRad);
+            const sin = Math.sin(angleRad);
+            
+            // Rotate each vertex around the centroid
+            this.selectedPolygon.vertices = this.selectedPolygon.vertices.map(v => {
+                const dx = v.x - centroid.x;
+                const dy = v.y - centroid.y;
+                return {
+                    x: centroid.x + (dx * cos - dy * sin),
+                    y: centroid.y + (dx * sin + dy * cos)
+                };
+            });
+            
+            this.redraw();
+            eventBus.emit('polygon:rotated');
+            this.recomputeVisibilityIfNeeded();
+        }
+    }
+
     deleteSelected() {
         if (this.selectedPolygon) {
             const index = this.polygons.indexOf(this.selectedPolygon);
@@ -779,6 +1002,31 @@ export class PolygonCanvasController {
             eventBus.emit('polygon:deleted');
             this.recomputeVisibilityIfNeeded();
         }
+    }
+
+    rotateEnvironment180() {
+        // Calculate canvas center in world coordinates
+        const centerScreen = {
+            x: this.canvas.width / 2,
+            y: this.canvas.height / 2
+        };
+        const center = this.screenToWorld(centerScreen.x, centerScreen.y);
+        
+        // Rotate all polygons 180° around the center
+        this.polygons.forEach(polygon => {
+            polygon.vertices = polygon.vertices.map(v => {
+                const dx = v.x - center.x;
+                const dy = v.y - center.y;
+                return {
+                    x: center.x - dx,  // 180° rotation: negate both dx and dy
+                    y: center.y - dy
+                };
+            });
+        });
+        
+        this.redraw();
+        eventBus.emit('environment:rotated180');
+        this.recomputeVisibilityIfNeeded();
     }
 
     clearAll() {
@@ -897,6 +1145,11 @@ export class PolygonCanvasController {
         // Draw VisibilNet training visualization (always draw if observer exists or samples to show)
         if (this.visibilnet.isActive || this.visibilnet.observer || (this.visibilnet.samplePoints && this.visibilnet.samplePoints.length > 0)) {
             this.drawVisibilNet();
+        }
+
+        // Draw KiloVisiNet training visualization (always draw if observer exists)
+        if (this.kilovisinet && (this.kilovisinet.isActive || this.kilovisinet.observer || this.kilovisinet.showCellBounds)) {
+            this.drawKiloVisiNet();
         }
 
         // Draw RRT trees if available
@@ -1258,6 +1511,145 @@ export class PolygonCanvasController {
         // Draw observer point on top
         if (vn.observer) {
             this.drawHandle(vn.observer.x, vn.observer.y, '#9C27B0', `Observer (${vn.numRays} rays)`);
+        }
+    }
+
+    drawKiloVisiNet() {
+        const ctx = this.ctx;
+        const kvn = this.kilovisinet;
+        
+        if (!kvn) return;
+        
+        // Debug logging
+        if (kvn.predictedVisibilityPoly && kvn.predictedVisibilityPoly.length > 0) {
+            console.log('Drawing KiloVisiNet predicted poly:', kvn.predictedVisibilityPoly.length, 'vertices');
+        }
+        if (kvn.visibilityPoly && kvn.visibilityPoly.length > 0) {
+            console.log('Drawing KiloVisiNet regular poly:', kvn.visibilityPoly.length, 'vertices');
+        }
+        
+        // Draw grid cell bounds if enabled
+        if (kvn.showCellBounds && kvn.cellSize) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(33, 150, 243, 0.3)'; // Light blue for grid
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            
+            // Get visible bounds
+            const bounds = this.getWorldViewBounds();
+            const cellSize = kvn.cellSize;
+            
+            // Draw vertical lines
+            const minCellX = Math.floor(bounds.minX / cellSize);
+            const maxCellX = Math.ceil(bounds.maxX / cellSize);
+            for (let cx = minCellX; cx <= maxCellX; cx++) {
+                const x = cx * cellSize;
+                ctx.beginPath();
+                ctx.moveTo(x, bounds.minY);
+                ctx.lineTo(x, bounds.maxY);
+                ctx.stroke();
+            }
+            
+            // Draw horizontal lines
+            const minCellY = Math.floor(bounds.minY / cellSize);
+            const maxCellY = Math.ceil(bounds.maxY / cellSize);
+            for (let cy = minCellY; cy <= maxCellY; cy++) {
+                const y = cy * cellSize;
+                ctx.beginPath();
+                ctx.moveTo(bounds.minX, y);
+                ctx.lineTo(bounds.maxX, y);
+                ctx.stroke();
+            }
+            
+            // Highlight cells with training data
+            if (kvn.gridCellKeys && kvn.gridCellKeys.length > 0) {
+                ctx.fillStyle = 'rgba(76, 175, 80, 0.1)'; // Light green fill
+                ctx.strokeStyle = 'rgba(76, 175, 80, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([]);
+                
+                for (const key of kvn.gridCellKeys) {
+                    const [cellX, cellY] = key.split(',').map(Number);
+                    const x = cellX * cellSize;
+                    const y = cellY * cellSize;
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                    ctx.strokeRect(x, y, cellSize, cellSize);
+                }
+            }
+            
+            ctx.restore();
+        }
+        
+        // Draw predicted visibility polygon (blue) first so actual is drawn on top
+        if (kvn.predictedVisibilityPoly && kvn.predictedVisibilityPoly.length > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(kvn.predictedVisibilityPoly[0].x, kvn.predictedVisibilityPoly[0].y);
+            for (let i = 1; i < kvn.predictedVisibilityPoly.length; i++) {
+                ctx.lineTo(kvn.predictedVisibilityPoly[i].x, kvn.predictedVisibilityPoly[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(33, 150, 243, 0.15)'; // Blue fill (lighter)
+            ctx.strokeStyle = 'rgba(25, 118, 210, 0.8)'; // Darker blue stroke
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]); // Dashed line for prediction
+            ctx.fill();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+        
+        // Draw actual visibility polygon with blue/teal tint
+        if (kvn.visibilityPoly && kvn.visibilityPoly.length > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(kvn.visibilityPoly[0].x, kvn.visibilityPoly[0].y);
+            for (let i = 1; i < kvn.visibilityPoly.length; i++) {
+                ctx.lineTo(kvn.visibilityPoly[i].x, kvn.visibilityPoly[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(33, 150, 243, 0.2)'; // Blue fill
+            ctx.strokeStyle = 'rgba(21, 101, 192, 0.9)'; // Darker blue stroke
+            ctx.lineWidth = 2;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // Draw rays from observer to each vertex
+            if (kvn.observer) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(33, 150, 243, 0.3)'; // Semi-transparent blue
+                ctx.lineWidth = 1;
+                for (let i = 0; i < kvn.visibilityPoly.length; i++) {
+                    const vertex = kvn.visibilityPoly[i];
+                    ctx.beginPath();
+                    ctx.moveTo(kvn.observer.x, kvn.observer.y);
+                    ctx.lineTo(vertex.x, vertex.y);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+        
+        // Draw observer point on top
+        if (kvn.observer) {
+            // Highlight current cell
+            if (kvn.cellSize) {
+                const cellX = Math.floor(kvn.observer.x / kvn.cellSize);
+                const cellY = Math.floor(kvn.observer.y / kvn.cellSize);
+                const x = cellX * kvn.cellSize;
+                const y = cellY * kvn.cellSize;
+                
+                ctx.save();
+                ctx.fillStyle = 'rgba(255, 193, 7, 0.2)'; // Amber highlight
+                ctx.strokeStyle = 'rgba(255, 193, 7, 0.8)';
+                ctx.lineWidth = 3;
+                ctx.fillRect(x, y, kvn.cellSize, kvn.cellSize);
+                ctx.strokeRect(x, y, kvn.cellSize, kvn.cellSize);
+                ctx.restore();
+            }
+            
+            this.drawHandle(kvn.observer.x, kvn.observer.y, '#2196F3', `Observer (${kvn.numRays} rays, Kilo)`);
         }
     }
 

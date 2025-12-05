@@ -25,6 +25,7 @@ export class ToolboxSection extends HTMLElement {
         const activeTrackingBtn = this.shadowRoot.querySelector('#activeTracking');
         const realTimeTrackingBtn = this.shadowRoot.querySelector('#realTimeTracking');
         const visibilnetTrainingBtn = this.shadowRoot.querySelector('#visibilnetTraining');
+        const kilovisinetTrainingBtn = this.shadowRoot.querySelector('#kilovisinetTraining');
         
         envAnalysisBtn?.addEventListener('click', () => {
             console.log('Environment Analysis button clicked');
@@ -78,6 +79,12 @@ export class ToolboxSection extends HTMLElement {
             console.log('VisibilNet Training button clicked');
             eventBus.emit('action:visibilnetTraining');
             console.log('Event emitted: action:visibilnetTraining');
+        });
+
+        kilovisinetTrainingBtn?.addEventListener('click', () => {
+            console.log('KiloVisiNet Training button clicked');
+            eventBus.emit('action:kilovisinetTraining');
+            console.log('Event emitted: action:kilovisinetTraining');
         });
     }
 
@@ -153,6 +160,11 @@ export class ToolboxSection extends HTMLElement {
                 <md-filled-button id="visibilnetTraining" class="tool-button">
                     <md-icon slot="icon">school</md-icon>
                     VisibilNet Training
+                </md-filled-button>
+                
+                <md-filled-button id="kilovisinetTraining" class="tool-button">
+                    <md-icon slot="icon">grid_4x4</md-icon>
+                    Kilo VisiNet Training
                 </md-filled-button>
             </div>
         `;
