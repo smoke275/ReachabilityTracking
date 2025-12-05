@@ -33,6 +33,7 @@ import './components/AgentsWindow.js';
 import './components/EvaderFutureSetWindow.js';
 import './components/VisibilityWindow.js';
 import './components/RRTWindow.js';
+import './components/VisibilNetTrainingWindow.js';
 import { ActiveTrackingWindow } from './components/ActiveTrackingWindow.js';
 import { RealTimeTrackingWindow } from './components/RealTimeTrackingWindow.js';
 
@@ -46,6 +47,7 @@ import { EvaderService } from './services/EvaderService.js';
 import { EvaderFutureSetService } from './services/EvaderFutureSetService.js';
 import { IntruderService } from './services/IntruderService.js';
 import { SensorModelService } from './services/SensorModelService.js';
+import { visibilnetService } from './services/VisibilNetService.js';
 import { activeTrackingService } from './services/ActiveTrackingService.js';
 import { realTimeTrackingService } from './services/RealTimeTrackingService.js';
 import { eventBus } from './utils/EventBus.js';
@@ -69,6 +71,7 @@ class App {
         this.agentsWindow = null;
         this.evaderFutureSetWindow = null;
         this.visibilityWindow = null;
+        this.visibilnetWindow = null;
         this.rrtWindow = null;
         this.activeTrackingWindow = null;
         this.realTimeTrackingWindow = null;
@@ -123,6 +126,12 @@ class App {
         this.visibilityWindow = document.createElement('visibility-window');
         document.body.appendChild(this.visibilityWindow);
         console.log('Visibility window created and appended:', this.visibilityWindow);
+
+        // Initialize VisibilNet Training window
+        console.log('Creating VisibilNet Training window...');
+        this.visibilnetWindow = document.createElement('visibilnet-training-window');
+        document.body.appendChild(this.visibilnetWindow);
+        console.log('VisibilNet Training window created and appended:', this.visibilnetWindow);
 
         // Initialize RRT window
         console.log('Creating RRT window...');
@@ -271,6 +280,7 @@ class App {
 
         // Visibility actions
         eventBus.on('action:visibilityAnalysis', () => this.showVisibilityWindow());
+        eventBus.on('action:visibilnetTraining', () => this.showVisibilNetWindow());
 
         // RRT tracking actions
         eventBus.on('action:rrtTracking', () => this.showRRTWindow());
@@ -816,6 +826,19 @@ class App {
         } else {
             console.error('Visibility window not initialized');
             alert('Visibility window not initialized. Please refresh the page.');
+        }
+    }
+
+    showVisibilNetWindow() {
+        if (this.visibilnetWindow) {
+            try {
+                this.visibilnetWindow.show();
+            } catch (error) {
+                console.error('Error showing VisibilNet window:', error);
+            }
+        } else {
+            console.error('VisibilNet window not initialized');
+            alert('VisibilNet window not initialized. Please refresh the page.');
         }
     }
 

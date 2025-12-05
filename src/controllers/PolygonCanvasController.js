@@ -5,6 +5,7 @@
 import { Polygon } from '../models/Polygon.js';
 import { eventBus } from '../utils/EventBus.js';
 import { VisibilityService } from '../services/VisibilityService.js';
+import { visibilnetService } from '../services/VisibilNetService.js';
 
 export class PolygonCanvasController {
     constructor(canvas) {
@@ -94,6 +95,16 @@ export class PolygonCanvasController {
         // Service instance
         this.visibilityService = new VisibilityService();
         
+        // VisibilNet training state
+        this.visibilnet = {
+            observer: null, // {x, y}
+            visibilityPoly: [],
+            predictedVisibilityPoly: [],
+            numRays: 36,
+            activeDrag: null, // 'observer' | null
+            isActive: false
+        };
+        
         this.setupEventListeners();
     }
 
@@ -150,6 +161,59 @@ export class PolygonCanvasController {
         // Recompute on camera changes if live and points exist
         eventBus.on('camera:panEnded', () => this.recomputeVisibilityIfNeeded());
         eventBus.on('camera:zoomChanged', () => this.recomputeVisibilityIfNeeded());
+
+        // VisibilNet training event listeners
+        eventBus.on('visibilnet:setPlacementMode', (mode) => {
+            this.visibilnet.activeDrag = mode;
+            this.visibilnet.isActive = true;
+        });
+        eventBus.on('visibilnet:clear', () => {
+            this.visibilnet.observer = null;
+            this.visibilnet.visibilityPoly = [];
+            this.visibilnet.activeDrag = null;
+            this.visibilnet.isActive = false;
+            this.visibilnet.samplePoints = [];
+            this.redraw();
+        });
+        eventBus.on('visibilnet:updateRayCount', (numRays) => {
+            this.visibilnet.numRays = numRays;
+            if (this.visibilnet.observer) {
+                this.computeVisibilNetVisibility();
+            }
+        });
+        eventBus.on('visibilnet:computeVisibility', (data) => {
+            if (data.position) {
+                this.visibilnet.observer = data.position;
+                this.visibilnet.numRays = data.numRays || this.visibilnet.numRays;
+                this.computeVisibilNetVisibility();
+            }
+        });
+        eventBus.on('visibilnet:windowClosed', () => {
+            this.visibilnet.isActive = false;
+            this.redraw();
+        });
+        eventBus.on('visibilnet:requestObserverPosition', (callback) => {
+            if (typeof callback === 'function') {
+                callback(this.visibilnet.observer);
+            }
+        });
+        eventBus.on('visibilnet:requestEnvironment', (callback) => {
+            if (typeof callback === 'function') {
+                const bounds = this.getWorldViewBounds();
+                callback({
+                    polygons: this.polygons,
+                    bounds: bounds
+                });
+            }
+        });
+        eventBus.on('visibilnet:setPredictedVisibility', (poly) => {
+            this.visibilnet.predictedVisibilityPoly = poly;
+            this.redraw();
+        });
+        eventBus.on('visibilnet:displaySamples', (samples) => {
+            this.visibilnet.samplePoints = samples;
+            this.redraw();
+        });
 
         // Listen for RRT tree updates
         eventBus.on('rrt:treesBuilt', (data) => {
@@ -331,14 +395,32 @@ export class PolygonCanvasController {
 
         // If visibility placement mode is active or clicking near existing point, handle that first
         const v = this.visibility;
-        const hit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= 10*10;
+        const vn = this.visibilnet;
+        // Use larger hit radius for observer (20 world units) for easier dragging
+        const observerHitRadius = 20;
+        const hit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= observerHitRadius*observerHitRadius;
+        const regularHitRadius = 10;
+        const regularHit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= regularHitRadius*regularHitRadius;
         if (e.button === 0) {
-            if (hit(v.start)) {
+            // Check VisibilNet observer hit first (if active) - use larger radius
+            if (vn.isActive && hit(vn.observer)) {
+                vn.activeDrag = 'observer';
+                return;
+            }
+            if (regularHit(v.start)) {
                 v.activeDrag = 'start';
                 return;
             }
-            if (hit(v.end)) {
+            if (regularHit(v.end)) {
                 v.activeDrag = 'end';
+                return;
+            }
+            // VisibilNet placement
+            if (vn.activeDrag === 'observer') {
+                vn.observer = { x: worldPos.x, y: worldPos.y };
+                this.computeVisibilNetVisibility();
+                eventBus.emit('visibilnet:observerMoved', vn.observer);
+                // keep activeDrag to allow dragging on this gesture
                 return;
             }
             if (v.activeDrag === 'start') {
@@ -424,6 +506,14 @@ export class PolygonCanvasController {
             return;
         }
 
+        // Drag VisibilNet observer
+        if (this.visibilnet.activeDrag === 'observer' && e.buttons & 1) {
+            this.visibilnet.observer = { x: worldPos.x, y: worldPos.y };
+            this.computeVisibilNetVisibility();
+            eventBus.emit('visibilnet:observerMoved', this.visibilnet.observer);
+            return;
+        }
+
         if (this.isPanning) {
             // Pan based on screen space movement for more intuitive control
             const dx = (screenX - this.lastScreenPos.x) / this.camera.zoom;
@@ -453,6 +543,10 @@ export class PolygonCanvasController {
         // Stop dragging visibility points
         if (this.visibility.activeDrag === 'start' || this.visibility.activeDrag === 'end') {
             this.visibility.activeDrag = null;
+        }
+        // Stop dragging VisibilNet observer
+        if (this.visibilnet.activeDrag === 'observer') {
+            this.visibilnet.activeDrag = null;
         }
         this.isDragging = false;
         this.isPanning = false;
@@ -550,6 +644,25 @@ export class PolygonCanvasController {
         } else {
             this.visibility.differencePoly = [];
         }
+    }
+
+    /**
+     * Compute VisibilNet visibility using ray-based approach
+     */
+    computeVisibilNetVisibility() {
+        if (!this.visibilnet.observer) return;
+        
+        const bounds = this.getWorldViewBounds();
+        const polygons = this.getPolygons();
+        
+        this.visibilnet.visibilityPoly = visibilnetService.computeRayBasedVisibility(
+            this.visibilnet.observer,
+            polygons,
+            bounds,
+            this.visibilnet.numRays
+        );
+        
+        this.redraw();
     }
 
     addPolygon(polygon) {
@@ -754,6 +867,11 @@ export class PolygonCanvasController {
         
         // Draw visibility polygons underneath points but above obstacles fill
         this.drawVisibility();
+
+        // Draw VisibilNet training visualization (always draw if observer exists or samples to show)
+        if (this.visibilnet.isActive || this.visibilnet.observer || (this.visibilnet.samplePoints && this.visibilnet.samplePoints.length > 0)) {
+            this.drawVisibilNet();
+        }
 
         // Draw RRT trees if available
         if (this.rrtTrees.pursuer && this.rrtTrees.showPursuer) {
@@ -1038,6 +1156,83 @@ export class PolygonCanvasController {
         // Draw points on top
         if (v.start) this.drawHandle(v.start.x, v.start.y, '#4CAF50', 'Start');
         if (v.end) this.drawHandle(v.end.x, v.end.y, '#2196F3', 'End');
+    }
+
+    drawVisibilNet() {
+        const ctx = this.ctx;
+        const vn = this.visibilnet;
+        
+        // Draw sample points first (if any) so they're underneath everything
+        if (vn.samplePoints && vn.samplePoints.length > 0) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(255, 87, 34, 0.8)'; // Orange with high opacity
+            ctx.strokeStyle = 'rgba(139, 47, 13, 0.9)'; // Dark orange outline
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i < vn.samplePoints.length; i++) {
+                const point = vn.samplePoints[i];
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+        
+        // Draw predicted visibility polygon (cyan/blue) first so actual is drawn on top
+        if (vn.predictedVisibilityPoly && vn.predictedVisibilityPoly.length > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(vn.predictedVisibilityPoly[0].x, vn.predictedVisibilityPoly[0].y);
+            for (let i = 1; i < vn.predictedVisibilityPoly.length; i++) {
+                ctx.lineTo(vn.predictedVisibilityPoly[i].x, vn.predictedVisibilityPoly[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(0, 188, 212, 0.15)'; // Cyan fill (lighter)
+            ctx.strokeStyle = 'rgba(0, 151, 167, 0.8)'; // Darker cyan stroke
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]); // Dashed line for prediction
+            ctx.fill();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+        
+        // Draw actual visibility polygon with purple/violet tint
+        if (vn.visibilityPoly && vn.visibilityPoly.length > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(vn.visibilityPoly[0].x, vn.visibilityPoly[0].y);
+            for (let i = 1; i < vn.visibilityPoly.length; i++) {
+                ctx.lineTo(vn.visibilityPoly[i].x, vn.visibilityPoly[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(156, 39, 176, 0.2)'; // Purple fill
+            ctx.strokeStyle = 'rgba(123, 31, 162, 0.9)'; // Darker purple stroke
+            ctx.lineWidth = 2;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // Draw rays from observer to each vertex
+            if (vn.observer) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(156, 39, 176, 0.3)'; // Semi-transparent purple
+                ctx.lineWidth = 1;
+                for (let i = 0; i < vn.visibilityPoly.length; i++) {
+                    const vertex = vn.visibilityPoly[i];
+                    ctx.beginPath();
+                    ctx.moveTo(vn.observer.x, vn.observer.y);
+                    ctx.lineTo(vertex.x, vertex.y);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+        
+        // Draw observer point on top
+        if (vn.observer) {
+            this.drawHandle(vn.observer.x, vn.observer.y, '#9C27B0', `Observer (${vn.numRays} rays)`);
+        }
     }
 
     drawHandle(x, y, color, label) {

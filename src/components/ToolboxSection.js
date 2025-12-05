@@ -24,6 +24,7 @@ export class ToolboxSection extends HTMLElement {
         const rrtTrackingBtn = this.shadowRoot.querySelector('#rrtTracking');
         const activeTrackingBtn = this.shadowRoot.querySelector('#activeTracking');
         const realTimeTrackingBtn = this.shadowRoot.querySelector('#realTimeTracking');
+        const visibilnetTrainingBtn = this.shadowRoot.querySelector('#visibilnetTraining');
         
         envAnalysisBtn?.addEventListener('click', () => {
             console.log('Environment Analysis button clicked');
@@ -71,6 +72,12 @@ export class ToolboxSection extends HTMLElement {
             console.log('Real-Time Tracking button clicked');
             eventBus.emit('action:realTimeTracking');
             console.log('Event emitted: action:realTimeTracking');
+        });
+
+        visibilnetTrainingBtn?.addEventListener('click', () => {
+            console.log('VisibilNet Training button clicked');
+            eventBus.emit('action:visibilnetTraining');
+            console.log('Event emitted: action:visibilnetTraining');
         });
     }
 
@@ -141,6 +148,11 @@ export class ToolboxSection extends HTMLElement {
                 <md-filled-button id="realTimeTracking" class="tool-button">
                     <md-icon slot="icon">play_circle</md-icon>
                     Real-Time Tracking
+                </md-filled-button>
+                
+                <md-filled-button id="visibilnetTraining" class="tool-button">
+                    <md-icon slot="icon">school</md-icon>
+                    VisibilNet Training
                 </md-filled-button>
             </div>
         `;

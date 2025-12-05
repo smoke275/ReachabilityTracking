@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@material/web": "^1.5.1",
+    "@tensorflow/tfjs": "^4.22.0",
     "@turf/turf": "^7.2.0"
   }
 }
