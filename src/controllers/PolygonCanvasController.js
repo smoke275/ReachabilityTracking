@@ -199,7 +199,33 @@ export class PolygonCanvasController {
         });
         eventBus.on('visibilnet:requestEnvironment', (callback) => {
             if (typeof callback === 'function') {
-                const bounds = this.getWorldViewBounds();
+                // Calculate bounds from all polygons to ensure we cover the whole environment
+                // instead of just the current view
+                let bounds;
+                if (this.polygons && this.polygons.length > 0) {
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    this.polygons.forEach(poly => {
+                        poly.vertices.forEach(v => {
+                            minX = Math.min(minX, v.x);
+                            maxX = Math.max(maxX, v.x);
+                            minY = Math.min(minY, v.y);
+                            maxY = Math.max(maxY, v.y);
+                        });
+                    });
+                    // Add a small margin
+                    const margin = 50;
+                    bounds = {
+                        minX: minX - margin,
+                        minY: minY - margin,
+                        maxX: maxX + margin,
+                        maxY: maxY + margin,
+                        width: (maxX - minX) + 2 * margin,
+                        height: (maxY - minY) + 2 * margin
+                    };
+                } else {
+                    bounds = this.getWorldViewBounds();
+                }
+
                 callback({
                     polygons: this.polygons,
                     bounds: bounds
