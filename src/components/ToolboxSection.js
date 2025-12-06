@@ -27,6 +27,7 @@ export class ToolboxSection extends HTMLElement {
         const visibilnetTrainingBtn = this.shadowRoot.querySelector('#visibilnetTraining');
         const kilovisinetTrainingBtn = this.shadowRoot.querySelector('#kilovisinetTraining');
         const similarityCalculatorBtn = this.shadowRoot.querySelector('#similarityCalculator');
+        const siminetTrainingBtn = this.shadowRoot.querySelector('#siminetTraining');
         
         envAnalysisBtn?.addEventListener('click', () => {
             console.log('Environment Analysis button clicked');
@@ -92,6 +93,12 @@ export class ToolboxSection extends HTMLElement {
             console.log('Similarity Calculator button clicked');
             eventBus.emit('action:similarityCalculator');
             console.log('Event emitted: action:similarityCalculator');
+        });
+
+        siminetTrainingBtn?.addEventListener('click', () => {
+            console.log('SimiNet Training button clicked');
+            eventBus.emit('action:siminetTraining');
+            console.log('Event emitted: action:siminetTraining');
         });
     }
 
@@ -177,6 +184,11 @@ export class ToolboxSection extends HTMLElement {
                 <md-filled-button id="similarityCalculator" class="tool-button">
                     <md-icon slot="icon">compare</md-icon>
                     Similarity Calculator
+                </md-filled-button>
+
+                <md-filled-button id="siminetTraining" class="tool-button">
+                    <md-icon slot="icon">model_training</md-icon>
+                    SimiNet Training
                 </md-filled-button>
             </div>
         `;

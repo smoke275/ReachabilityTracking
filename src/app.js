@@ -12,6 +12,7 @@ import '@material/web/icon/icon.js';
 import '@material/web/iconbutton/icon-button.js';
 import '@material/web/iconbutton/filled-icon-button.js';
 import '@material/web/textfield/filled-text-field.js';
+import '@material/web/textfield/outlined-text-field.js';
 import '@material/web/slider/slider.js';
 import '@material/web/divider/divider.js';
 import '@material/web/chips/chip-set.js';
@@ -36,6 +37,7 @@ import './components/RRTWindow.js';
 import './components/VisibilNetTrainingWindow.js';
 import './components/KiloVisiNetTrainingWindow.js';
 import './components/SimilarityCalculatorWindow.js';
+import './components/SimiNetTrainingWindow.js';
 import { ActiveTrackingWindow } from './components/ActiveTrackingWindow.js';
 import { RealTimeTrackingWindow } from './components/RealTimeTrackingWindow.js';
 
@@ -52,6 +54,7 @@ import { SensorModelService } from './services/SensorModelService.js';
 import { visibilnetService } from './services/VisibilNetService.js';
 import { kilovisinetService } from './services/KiloVisiNetService.js';
 import { similarityCalculatorService } from './services/SimilarityCalculatorService.js';
+import { siminetService } from './services/SimiNetService.js';
 import { activeTrackingService } from './services/ActiveTrackingService.js';
 import { realTimeTrackingService } from './services/RealTimeTrackingService.js';
 import { eventBus } from './utils/EventBus.js';
@@ -70,6 +73,7 @@ class App {
         this.intruderService = new IntruderService();
         this.sensorModelService = new SensorModelService();
         this.similarityCalculatorService = similarityCalculatorService;
+        this.siminetService = siminetService;
         this.canvasController = null;
         this.analysisWindow = null;
         this.evaderWindow = null;
@@ -152,6 +156,12 @@ class App {
         console.log('Similarity Calculator window element created:', this.similarityWindow);
         document.body.appendChild(this.similarityWindow);
         console.log('Similarity Calculator window created and appended:', this.similarityWindow);
+
+        // Initialize SimiNet Training window
+        console.log('Creating SimiNet Training window...');
+        this.siminetWindow = document.createElement('siminet-training-window');
+        document.body.appendChild(this.siminetWindow);
+        console.log('SimiNet Training window created and appended:', this.siminetWindow);
 
         // Initialize RRT window
         console.log('Creating RRT window...');
@@ -315,6 +325,7 @@ class App {
         eventBus.on('action:visibilnetTraining', () => this.showVisibilNetWindow());
         eventBus.on('action:kilovisinetTraining', () => this.showKiloVisiNetWindow());
         eventBus.on('action:similarityCalculator', () => this.showSimilarityWindow());
+        eventBus.on('action:siminetTraining', () => this.showSimiNetWindow());
 
         // RRT tracking actions
         eventBus.on('action:rrtTracking', () => this.showRRTWindow());
@@ -612,18 +623,26 @@ class App {
      * Update obstacles for all services that need collision detection
      */
     updateObstaclesForAllServices() {
-        if (this.canvasController) {
-            const polygons = this.canvasController.getPolygons();
-            const bounds = this.canvasController.getWorldViewBounds();
-            this.evaderService.setObstacles(polygons);
-            this.intruderService.setObstacles(polygons);
-            this.sensorModelService.setObstacles(polygons);
-            activeTrackingService.setObstacles(polygons);
-            similarityCalculatorService.setEnvironment(polygons, bounds);
-            // Also set sensor model service reference
-            activeTrackingService.setSensorModelService(this.sensorModelService);
-            console.log(`Updated obstacles for all services: ${polygons.length} polygons`);
-        }
+        if (!this.canvasController) return;
+        
+        const polygons = this.canvasController.getPolygons();
+        const bounds = this.calculateWorkspaceBounds(polygons);
+        
+        // Update all services that need obstacle information
+        // MedialAxisService is stateless regarding polygons, passed in generate call
+        this.evaderService.setObstacles(polygons);
+        // EvaderFutureSetService receives polygons in compute() call
+        this.intruderService.setObstacles(polygons);
+        this.sensorModelService.setObstacles(polygons);
+        this.similarityCalculatorService.setEnvironment(polygons, bounds);
+        this.siminetService.setEnvironment(polygons, bounds);
+        // VisibilNetService and KiloVisiNetService are stateless regarding environment
+        activeTrackingService.setObstacles(polygons);
+        realTimeTrackingService.obstacles = polygons;
+        rrtStarService.obstacles = polygons;
+        rrtStarService.config.bounds = bounds;
+        
+        console.log('Updated obstacles for all services, count:', polygons.length);
     }
 
     handleExport() {
@@ -988,6 +1007,26 @@ class App {
         } else {
             console.error('Similarity Calculator window not initialized');
             alert('Similarity Calculator window not initialized. Please refresh the page.');
+        }
+    }
+
+    showSimiNetWindow() {
+        console.log('showSimiNetWindow called');
+        if (this.siminetWindow) {
+            try {
+                // Check if show method exists (it might be a web component property)
+                if (typeof this.siminetWindow.show === 'function') {
+                    this.siminetWindow.show();
+                } else {
+                    this.siminetWindow.setAttribute('visible', '');
+                }
+                console.log('SimiNet Training window shown');
+            } catch (error) {
+                console.error('Error showing SimiNet Training window:', error);
+            }
+        } else {
+            console.error('SimiNet Training window not initialized');
+            alert('SimiNet Training window not initialized. Please refresh the page.');
         }
     }
 

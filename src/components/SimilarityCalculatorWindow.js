@@ -357,6 +357,12 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                     z-index: 1000;
                     display: none;
                     pointer-events: none;
+                    /* Floating palette overrides - Purple Theme */
+                    --floating-primary: #673AB7;
+                    --floating-on-primary: #FFFFFF;
+                    --floating-surface: #EDE7F6;
+                    --floating-on-surface: #311B92;
+                    --floating-on-surface-variant: #4527A0;
                 }
                 
                 :host([visible]) {
@@ -366,26 +372,26 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                 
                 .window-container {
                     position: fixed;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: #FFFFFF;
-                    border-radius: 16px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                    background: var(--floating-surface, #EDE7F6);
+                    color: var(--floating-on-surface, #311B92);
+                    border-radius: 12px;
+                    box-shadow: 
+                        0px 4px 8px rgba(0, 0, 0, 0.12),
+                        0px 8px 16px rgba(0, 0, 0, 0.08);
                     min-width: 380px;
                     max-width: 450px;
                     overflow: hidden;
-                    border: 2px solid rgba(255, 255, 255, 0.2);
                 }
                 
                 .window-header {
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
-                    padding: 1.25rem;
-                    background: rgba(255, 255, 255, 0.15);
-                    backdrop-filter: blur(10px);
+                    padding: 12px 16px;
+                    background: var(--floating-primary, #673AB7);
+                    color: var(--floating-on-primary, #FFFFFF);
                     cursor: grab;
                     user-select: none;
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
                 }
                 
                 .window-header:active {
@@ -395,30 +401,41 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                 .window-title {
                     display: flex;
                     align-items: center;
-                    gap: 0.6rem;
-                    font-size: 1.1rem;
-                    font-weight: 700;
-                    color: #FFFFFF;
-                    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    gap: 8px;
+                    font-size: 1rem;
+                    font-weight: 500;
                 }
                 
                 .window-title md-icon {
-                    font-size: 28px;
-                    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+                    font-size: 24px;
                 }
                 
                 .window-controls {
                     display: flex;
-                    gap: 0.25rem;
+                    gap: 4px;
                 }
                 
-                .window-controls md-icon-button {
-                    --md-icon-button-icon-color: #FFFFFF;
+                .control-btn {
+                    background: transparent;
+                    border: none;
+                    color: var(--floating-on-primary, #FFFFFF);
+                    cursor: pointer;
+                    padding: 4px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 32px;
+                    height: 32px;
+                    transition: background 0.2s;
+                }
+
+                .control-btn:hover {
+                    background: rgba(255, 255, 255, 0.1);
                 }
                 
                 .window-content {
-                    padding: 1.5rem;
-                    background: #f8f9fa;
+                    padding: 16px;
                     max-height: 500px;
                     overflow-y: auto;
                     overscroll-behavior: contain;
@@ -439,133 +456,89 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                 }
                 
                 .section {
-                    margin-bottom: 1.25rem;
-                    padding: 1.25rem;
-                    background: #FFFFFF;
-                    border-radius: 12px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-                    border-left: 4px solid transparent;
-                    transition: all 0.3s ease;
-                }
-                
-                .section:hover {
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-                    transform: translateY(-2px);
+                    margin-bottom: 16px;
                 }
 
                 .section-title {
                     display: flex;
                     align-items: center;
-                    gap: 0.5rem;
-                    font-size: 1rem;
-                    font-weight: 700;
-                    margin-bottom: 0.85rem;
-                    color: #2c3e50;
+                    gap: 8px;
+                    font-size: 0.875rem;
+                    font-weight: 600;
+                    margin-bottom: 12px;
+                    color: var(--floating-primary, #673AB7);
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
                 }
                 
                 .section-title md-icon {
-                    font-size: 24px;
-                    color: #673ab7;
+                    font-size: 20px;
                 }
                 
                 .button-group {
                     display: flex;
-                    gap: 0.6rem;
+                    gap: 8px;
                     flex-wrap: wrap;
-                    margin-bottom: 1rem;
+                    margin-bottom: 12px;
                 }
                 
                 md-filled-button,
                 md-filled-tonal-button {
                     flex: 1;
                     min-width: 115px;
-                    font-size: 0.85rem;
-                    font-weight: 600;
-                    --md-filled-tonal-button-container-height: 42px;
                 }
                 
                 .observer-info {
                     display: grid;
                     grid-template-columns: 1fr 1fr;
-                    gap: 1rem;
-                    margin-bottom: 1rem;
+                    gap: 12px;
+                    margin-bottom: 12px;
                 }
                 
                 .observer-card {
-                    padding: 1rem;
-                    background: linear-gradient(135deg, #ffffff 0%, #f3e5f5 100%);
+                    padding: 12px;
+                    background: rgba(255, 255, 255, 0.5);
                     border-radius: 8px;
-                    border: 1px solid rgba(0,0,0,0.05);
+                    border: 1px solid rgba(0,0,0,0.1);
                 }
                 
                 .observer-label {
                     font-size: 0.75rem;
-                    font-weight: 700;
-                    color: #673ab7;
-                    margin-bottom: 0.5rem;
-                    text-transform: uppercase;
+                    font-weight: 600;
+                    margin-bottom: 4px;
                 }
                 
                 .observer-position {
-                    font-size: 0.85rem;
-                    color: #546e7a;
-                    font-family: 'Courier New', monospace;
-                    font-weight: 600;
-                }
-                
-                .similarity-display {
-                    text-align: center;
-                    padding: 1.5rem;
-                    background: linear-gradient(135deg, #263238 0%, #37474f 100%);
-                    border-radius: 12px;
-                    margin-bottom: 1rem;
-                    box-shadow: inset 0 2px 6px rgba(0,0,0,0.2);
-                    border: 1px solid rgba(255,255,255,0.1);
-                }
-                
-                .similarity-label {
-                    font-size: 0.85rem;
-                    color: rgba(255,255,255,0.7);
-                    margin-bottom: 0.5rem;
-                }
-                
-                .similarity-value {
-                    font-size: 2rem;
-                    font-weight: 700;
-                    color: #4CAF50;
-                    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                    font-family: monospace;
+                    font-size: 0.9rem;
+                    font-weight: 500;
                 }
                 
                 .slider-container {
-                    margin-bottom: 1rem;
+                    padding: 12px;
+                    background: rgba(0,0,0,0.03);
+                    border-radius: 8px;
                 }
                 
                 .slider-label {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    margin-bottom: 0.5rem;
-                    font-size: 0.85rem;
-                    font-weight: 600;
-                    color: #37474f;
+                    margin-bottom: 8px;
+                    font-size: 0.875rem;
+                    font-weight: 500;
                 }
                 
                 .slider-value {
-                    color: #2196F3;
-                    font-weight: 700;
-                    font-family: 'Courier New', monospace;
-                    font-size: 0.9rem;
-                    padding: 0.2rem 0.5rem;
-                    background: rgba(33, 150, 243, 0.1);
-                    border-radius: 4px;
+                    font-weight: 600;
+                    color: var(--floating-primary, #673AB7);
                 }
                 
-                /* Custom Range Slider */
                 input[type="range"] {
                     width: 100%;
-                    height: 6px;
-                    border-radius: 3px;
-                    background: linear-gradient(to right, #bbdefb 0%, #2196F3 100%);
+                    height: 4px;
+                    background: rgba(0,0,0,0.1);
+                    border-radius: 2px;
                     outline: none;
                     -webkit-appearance: none;
                 }
@@ -573,34 +546,112 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                 input[type="range"]::-webkit-slider-thumb {
                     -webkit-appearance: none;
                     appearance: none;
-                    width: 18px;
-                    height: 18px;
+                    width: 16px;
+                    height: 16px;
+                    background: var(--floating-primary, #673AB7);
                     border-radius: 50%;
-                    background: #2196F3;
                     cursor: pointer;
-                    box-shadow: 0 2px 6px rgba(33, 150, 243, 0.4);
-                    transition: all 0.2s ease;
+                    transition: transform 0.1s;
                 }
                 
                 input[type="range"]::-webkit-slider-thumb:hover {
                     transform: scale(1.2);
-                    box-shadow: 0 3px 10px rgba(33, 150, 243, 0.6);
                 }
                 
-                .status-bar {
-                    font-size: 0.9rem;
-                    color: #2c3e50;
-                    padding: 0.85rem;
-                    background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
+                .similarity-display {
+                    background: rgba(0,0,0,0.03);
                     border-radius: 8px;
+                    padding: 16px;
                     text-align: center;
-                    min-height: 2.5rem;
+                    margin-bottom: 12px;
+                    border: 1px solid rgba(0,0,0,0.05);
+                }
+                
+                .similarity-label {
+                    font-size: 0.875rem;
+                    color: var(--floating-on-surface-variant, #4527A0);
+                    margin-bottom: 8px;
+                    font-weight: 500;
+                }
+                
+                .similarity-value {
+                    font-size: 2.5rem;
+                    font-weight: 700;
+                    line-height: 1.2;
+                    color: var(--floating-primary, #673AB7);
+                }
+                
+                .similarity-details {
+                    font-size: 0.75rem;
+                    color: var(--floating-on-surface-variant, #4527A0);
+                    opacity: 0.8;
+                    margin-top: 8px;
+                }
+                
+                .toggle-container {
+                    margin-top: 12px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-weight: 600;
-                    box-shadow: 0 2px 6px rgba(255, 235, 59, 0.3);
-                    border: 1px solid rgba(251, 192, 45, 0.3);
+                    gap: 8px;
+                }
+                
+                /* Toggle Switch */
+                .switch {
+                    position: relative;
+                    display: inline-block;
+                    width: 36px;
+                    height: 20px;
+                }
+                
+                .switch input {
+                    opacity: 0;
+                    width: 0;
+                    height: 0;
+                }
+                
+                .slider {
+                    position: absolute;
+                    cursor: pointer;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background-color: #ccc;
+                    transition: .4s;
+                    border-radius: 20px;
+                }
+                
+                .slider:before {
+                    position: absolute;
+                    content: "";
+                    height: 16px;
+                    width: 16px;
+                    left: 2px;
+                    bottom: 2px;
+                    background-color: white;
+                    transition: .4s;
+                    border-radius: 50%;
+                }
+                
+                input:checked + .slider {
+                    background-color: var(--floating-primary, #673AB7);
+                }
+                
+                input:focus + .slider {
+                    box-shadow: 0 0 1px var(--floating-primary, #673AB7);
+                }
+                
+                input:checked + .slider:before {
+                    transform: translateX(16px);
+                }
+                
+                .status-text {
+                    font-size: 0.75rem;
+                    color: var(--floating-on-surface-variant, #4527A0);
+                    text-align: center;
+                    margin-top: 12px;
+                    opacity: 0.8;
                 }
             </style>
             
@@ -608,22 +659,22 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                 <div class="window-header">
                     <div class="window-title">
                         <md-icon>compare</md-icon>
-                        <span>Similarity Calculator</span>
+                        Similarity Calculator
                     </div>
                     <div class="window-controls">
-                        <md-icon-button class="minimize-btn">
+                        <button class="control-btn minimize-btn">
                             <md-icon>remove</md-icon>
-                        </md-icon-button>
-                        <md-icon-button class="close-btn">
+                        </button>
+                        <button class="control-btn close-btn">
                             <md-icon>close</md-icon>
-                        </md-icon-button>
+                        </button>
                     </div>
                 </div>
                 
                 <div class="window-content">
-                    <div class="section" style="border-left-color: #4CAF50;">
+                    <div class="section">
                         <div class="section-title">
-                            <md-icon style="color: #4CAF50;">location_on</md-icon>
+                            <md-icon>location_on</md-icon>
                             Observer Placement
                         </div>
                         <div class="button-group">
@@ -646,11 +697,15 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                                 <div class="observer-position" id="observer2Display">Not placed</div>
                             </div>
                         </div>
+                        <md-outlined-button id="clearObservers" style="width: 100%;">
+                            <md-icon slot="icon">clear</md-icon>
+                            Clear Observers
+                        </md-outlined-button>
                     </div>
                     
-                    <div class="section" style="border-left-color: #2196F3;">
+                    <div class="section">
                         <div class="section-title">
-                            <md-icon style="color: #2196F3;">visibility</md-icon>
+                            <md-icon>visibility</md-icon>
                             Visibility Configuration
                         </div>
                         <div class="slider-container">
@@ -669,24 +724,24 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                         </div>
                     </div>
                     
-                    <div class="section" style="border-left-color: #9C27B0;">
+                    <div class="section">
                         <div class="section-title">
-                            <md-icon style="color: #9C27B0;">analytics</md-icon>
+                            <md-icon>analytics</md-icon>
                             Similarity Result
                         </div>
                         
                         <!-- Monte Carlo Result -->
-                        <div class="similarity-display" style="background: linear-gradient(135deg, #311b92 0%, #4527a0 100%); margin-top: 0.5rem;">
-                            <div class="similarity-label">Monte Carlo (2000 samples)</div>
+                        <div class="similarity-display" style="background: linear-gradient(135deg, #311b92 0%, #4527a0 100%); color: white;">
+                            <div class="similarity-label" style="color: rgba(255,255,255,0.9);">Monte Carlo (2000 samples)</div>
                             <div class="similarity-value" id="mcSimilarityDisplay" style="color: #B388FF;">--</div>
-                            <div class="similarity-details" id="mcDetails" style="font-size: 0.75rem; color: rgba(255,255,255,0.5); margin-top: 0.5rem;"></div>
+                            <div class="similarity-details" id="mcDetails" style="color: rgba(255,255,255,0.7);"></div>
                             
-                            <div class="toggle-container" style="margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                                <label class="switch" style="position: relative; display: inline-block; width: 40px; height: 20px;">
-                                    <input type="checkbox" id="mcToggle" style="opacity: 0; width: 0; height: 0;">
-                                    <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;"></span>
+                            <div class="toggle-container">
+                                <label class="switch">
+                                    <input type="checkbox" id="mcToggle">
+                                    <span class="slider round"></span>
                                 </label>
-                                <label for="mcToggle" style="font-size: 0.75rem; color: rgba(255,255,255,0.7); cursor: pointer;">Enable MC Calculation</label>
+                                <label for="mcToggle" style="font-size: 0.75rem; color: rgba(255,255,255,0.9); cursor: pointer;">Enable MC Calculation</label>
                             </div>
                         </div>
 
@@ -694,50 +749,18 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                         <div class="similarity-display">
                             <div class="similarity-label" id="similarityLabel">Geometric Intersection</div>
                             <div class="similarity-value" id="similarityDisplay">--</div>
-                            <div class="similarity-details" id="geoDetails" style="font-size: 0.75rem; color: rgba(255,255,255,0.5); margin-top: 0.5rem;"></div>
+                            <div class="similarity-details" id="geoDetails"></div>
                             
-                            <div class="toggle-container" style="margin-top: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                                <label class="switch" style="position: relative; display: inline-block; width: 40px; height: 20px;">
-                                    <input type="checkbox" id="geometricToggle" style="opacity: 0; width: 0; height: 0;">
-                                    <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px;"></span>
+                            <div class="toggle-container">
+                                <label class="switch">
+                                    <input type="checkbox" id="geometricToggle">
+                                    <span class="slider round"></span>
                                 </label>
-                                <label for="geometricToggle" style="font-size: 0.75rem; color: rgba(255,255,255,0.7); cursor: pointer;">Enable Exact Calculation</label>
+                                <label for="geometricToggle" style="font-size: 0.75rem; cursor: pointer;">Enable Exact Calculation</label>
                             </div>
                         </div>
                         
-                        <style>
-                            .switch input:checked + .slider {
-                                background-color: #4CAF50;
-                            }
-                            .switch input:focus + .slider {
-                                box-shadow: 0 0 1px #4CAF50;
-                            }
-                            .switch input:checked + .slider:before {
-                                transform: translateX(20px);
-                            }
-                            .slider:before {
-                                position: absolute;
-                                content: "";
-                                height: 16px;
-                                width: 16px;
-                                left: 2px;
-                                bottom: 2px;
-                                background-color: white;
-                                transition: .4s;
-                                border-radius: 50%;
-                            }
-                        </style>
-                    </div>
-                    
-                    <div class="section" style="border-left-color: #607D8B;">
-                        <md-filled-tonal-button id="clearObservers" style="width: 100%;">
-                            <md-icon slot="icon">clear</md-icon>
-                            Clear Observers
-                        </md-filled-tonal-button>
-                    </div>
-                    
-                    <div class="status-bar" id="statusText">
-                        Place observers to begin
+                        <div class="status-text" id="statusMessage">Place observers to begin</div>
                     </div>
                 </div>
             </div>
