@@ -217,3 +217,6 @@ export class VisibilityService {
 }
 
 export default VisibilityService;
+
+// Create singleton instance for easy access
+export const visibilityService = new VisibilityService();

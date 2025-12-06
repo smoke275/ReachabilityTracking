@@ -105,6 +105,17 @@ export class PolygonCanvasController {
             isActive: false
         };
         
+        // Similarity calculator state
+        this.similarity = {
+            observer1: null, // {x, y}
+            observer2: null, // {x, y}
+            visibilityPoly1: [],
+            visibilityPoly2: [],
+            numRays: 36,
+            activeDrag: null, // 'observer1' | 'observer2' | null
+            isActive: false
+        };
+        
         this.setupEventListeners();
     }
 
@@ -349,6 +360,45 @@ export class PolygonCanvasController {
             this.redraw();
         });
 
+        // Similarity Calculator event listeners
+        eventBus.on('similarity:setPlacementMode', (data) => {
+            this.similarity.activeDrag = data.observer; // 'observer1' or 'observer2'
+            this.similarity.isActive = true;
+        });
+        eventBus.on('similarity:clear', () => {
+            this.similarity.observer1 = null;
+            this.similarity.observer2 = null;
+            this.similarity.visibilityPoly1 = [];
+            this.similarity.visibilityPoly2 = [];
+            this.similarity.activeDrag = null;
+            this.similarity.isActive = false;
+            this.redraw();
+        });
+        eventBus.on('similarity:updateRayCount', (numRays) => {
+            this.similarity.numRays = numRays;
+            if (this.similarity.observer1) {
+                this.computeSimilarityVisibility('observer1');
+            }
+            if (this.similarity.observer2) {
+                this.computeSimilarityVisibility('observer2');
+            }
+        });
+        eventBus.on('similarity:computeVisibility', (data) => {
+            if (data.position && data.observer) {
+                if (data.observer === 'observer1') {
+                    this.similarity.observer1 = data.position;
+                } else if (data.observer === 'observer2') {
+                    this.similarity.observer2 = data.position;
+                }
+                this.similarity.numRays = data.numRays || this.similarity.numRays;
+                this.computeSimilarityVisibility(data.observer);
+            }
+        });
+        eventBus.on('similarity:windowClosed', () => {
+            this.similarity.isActive = false;
+            this.redraw();
+        });
+
         // Listen for RRT tree updates
         eventBus.on('rrt:treesBuilt', (data) => {
             this.rrtTrees.pursuer = data.pursuerTree;
@@ -531,12 +581,22 @@ export class PolygonCanvasController {
         const v = this.visibility;
         const vn = this.visibilnet;
         const kvn = this.kilovisinet;
+        const sim = this.similarity;
         // Use larger hit radius for observer (20 world units) for easier dragging
         const observerHitRadius = 20;
         const hit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= observerHitRadius*observerHitRadius;
         const regularHitRadius = 10;
         const regularHit = (p) => p && ((p.x - worldPos.x)**2 + (p.y - worldPos.y)**2) <= regularHitRadius*regularHitRadius;
         if (e.button === 0) {
+            // Check Similarity Calculator observers hit first (if active) - use larger radius
+            if (sim.isActive && hit(sim.observer1)) {
+                sim.activeDrag = 'observer1';
+                return;
+            }
+            if (sim.isActive && hit(sim.observer2)) {
+                sim.activeDrag = 'observer2';
+                return;
+            }
             // Check KiloVisiNet observer hit first (if active) - use larger radius
             if (kvn && kvn.isActive && hit(kvn.observer)) {
                 kvn.activeDrag = 'observer';
@@ -553,6 +613,21 @@ export class PolygonCanvasController {
             }
             if (regularHit(v.end)) {
                 v.activeDrag = 'end';
+                return;
+            }
+            // Similarity Calculator placement
+            if (sim.activeDrag === 'observer1') {
+                sim.observer1 = { x: worldPos.x, y: worldPos.y };
+                this.computeSimilarityVisibility('observer1');
+                eventBus.emit('similarity:observerPlaced', { observer: 'observer1', position: sim.observer1 });
+                // keep activeDrag to allow dragging on this gesture
+                return;
+            }
+            if (sim.activeDrag === 'observer2') {
+                sim.observer2 = { x: worldPos.x, y: worldPos.y };
+                this.computeSimilarityVisibility('observer2');
+                eventBus.emit('similarity:observerPlaced', { observer: 'observer2', position: sim.observer2 });
+                // keep activeDrag to allow dragging on this gesture
                 return;
             }
             // KiloVisiNet placement
@@ -670,6 +745,20 @@ export class PolygonCanvasController {
             return;
         }
 
+        // Drag Similarity Calculator observers
+        if (this.similarity.activeDrag === 'observer1' && e.buttons & 1) {
+            this.similarity.observer1 = { x: worldPos.x, y: worldPos.y };
+            this.computeSimilarityVisibility('observer1');
+            eventBus.emit('similarity:observerMoved', { observer: 'observer1', position: this.similarity.observer1 });
+            return;
+        }
+        if (this.similarity.activeDrag === 'observer2' && e.buttons & 1) {
+            this.similarity.observer2 = { x: worldPos.x, y: worldPos.y };
+            this.computeSimilarityVisibility('observer2');
+            eventBus.emit('similarity:observerMoved', { observer: 'observer2', position: this.similarity.observer2 });
+            return;
+        }
+
         if (this.isPanning) {
             // Pan based on screen space movement for more intuitive control
             const dx = (screenX - this.lastScreenPos.x) / this.camera.zoom;
@@ -707,6 +796,10 @@ export class PolygonCanvasController {
         // Stop dragging KiloVisiNet observer
         if (this.kilovisinet && this.kilovisinet.activeDrag === 'observer') {
             this.kilovisinet.activeDrag = null;
+        }
+        // Stop dragging Similarity Calculator observers
+        if (this.similarity.activeDrag === 'observer1' || this.similarity.activeDrag === 'observer2') {
+            this.similarity.activeDrag = null;
         }
         this.isDragging = false;
         this.isPanning = false;
@@ -842,6 +935,60 @@ export class PolygonCanvasController {
             );
             this.redraw();
         });
+    }
+
+    /**
+     * Compute visibility polygon for similarity calculator observers using ray-based approach
+     */
+    computeSimilarityVisibility(observer) {
+        if (!this.similarity[observer]) return;
+        
+        // Calculate bounds from all polygons
+        let bounds;
+        if (this.polygons && this.polygons.length > 0) {
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            this.polygons.forEach(poly => {
+                poly.vertices.forEach(v => {
+                    minX = Math.min(minX, v.x);
+                    maxX = Math.max(maxX, v.x);
+                    minY = Math.min(minY, v.y);
+                    maxY = Math.max(maxY, v.y);
+                });
+            });
+            const margin = 50;
+            bounds = {
+                minX: minX - margin,
+                minY: minY - margin,
+                maxX: maxX + margin,
+                maxY: maxY + margin
+            };
+        } else {
+            bounds = this.getWorldViewBounds();
+        }
+        
+        const polygons = this.getPolygons();
+        
+        // Use VisibilNetService for ray-based visibility (equally spaced rays)
+        const visibilityPoly = visibilnetService.computeRayBasedVisibility(
+            this.similarity[observer],
+            polygons,
+            bounds,
+            this.similarity.numRays
+        );
+        
+        if (observer === 'observer1') {
+            this.similarity.visibilityPoly1 = visibilityPoly;
+        } else if (observer === 'observer2') {
+            this.similarity.visibilityPoly2 = visibilityPoly;
+        }
+        
+        // Emit the computed polygon to the window
+        eventBus.emit('similarity:visibilityComputed', {
+            observer,
+            polygon: visibilityPoly
+        });
+        
+        this.redraw();
     }
 
     addPolygon(polygon) {
@@ -1150,6 +1297,11 @@ export class PolygonCanvasController {
         // Draw KiloVisiNet training visualization (always draw if observer exists)
         if (this.kilovisinet && (this.kilovisinet.isActive || this.kilovisinet.observer || this.kilovisinet.showCellBounds)) {
             this.drawKiloVisiNet();
+        }
+
+        // Draw Similarity Calculator visualization (always draw if any observer exists)
+        if (this.similarity.isActive || this.similarity.observer1 || this.similarity.observer2) {
+            this.drawSimilarityCalculator();
         }
 
         // Draw RRT trees if available
@@ -1650,6 +1802,83 @@ export class PolygonCanvasController {
             }
             
             this.drawHandle(kvn.observer.x, kvn.observer.y, '#2196F3', `Observer (${kvn.numRays} rays, Kilo)`);
+        }
+    }
+
+    drawSimilarityCalculator() {
+        const ctx = this.ctx;
+        const sim = this.similarity;
+        
+        // Draw visibility polygon for Observer 1 (green)
+        if (sim.visibilityPoly1 && sim.visibilityPoly1.length > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(sim.visibilityPoly1[0].x, sim.visibilityPoly1[0].y);
+            for (let i = 1; i < sim.visibilityPoly1.length; i++) {
+                ctx.lineTo(sim.visibilityPoly1[i].x, sim.visibilityPoly1[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(76, 175, 80, 0.15)'; // Green fill
+            ctx.strokeStyle = 'rgba(56, 142, 60, 0.9)'; // Darker green stroke
+            ctx.lineWidth = 2;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // Draw rays from observer1 to each vertex
+            if (sim.observer1) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(76, 175, 80, 0.3)'; // Semi-transparent green
+                ctx.lineWidth = 1;
+                for (let i = 0; i < sim.visibilityPoly1.length; i++) {
+                    const vertex = sim.visibilityPoly1[i];
+                    ctx.beginPath();
+                    ctx.moveTo(sim.observer1.x, sim.observer1.y);
+                    ctx.lineTo(vertex.x, vertex.y);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+        
+        // Draw visibility polygon for Observer 2 (orange)
+        if (sim.visibilityPoly2 && sim.visibilityPoly2.length > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(sim.visibilityPoly2[0].x, sim.visibilityPoly2[0].y);
+            for (let i = 1; i < sim.visibilityPoly2.length; i++) {
+                ctx.lineTo(sim.visibilityPoly2[i].x, sim.visibilityPoly2[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(255, 152, 0, 0.15)'; // Orange fill
+            ctx.strokeStyle = 'rgba(245, 124, 0, 0.9)'; // Darker orange stroke
+            ctx.lineWidth = 2;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            // Draw rays from observer2 to each vertex
+            if (sim.observer2) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255, 152, 0, 0.3)'; // Semi-transparent orange
+                ctx.lineWidth = 1;
+                for (let i = 0; i < sim.visibilityPoly2.length; i++) {
+                    const vertex = sim.visibilityPoly2[i];
+                    ctx.beginPath();
+                    ctx.moveTo(sim.observer2.x, sim.observer2.y);
+                    ctx.lineTo(vertex.x, vertex.y);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+        
+        // Draw observer points on top
+        if (sim.observer1) {
+            this.drawHandle(sim.observer1.x, sim.observer1.y, '#4CAF50', 'Observer 1');
+        }
+        if (sim.observer2) {
+            this.drawHandle(sim.observer2.x, sim.observer2.y, '#FF9800', 'Observer 2');
         }
     }
 

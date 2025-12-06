@@ -26,6 +26,7 @@ export class ToolboxSection extends HTMLElement {
         const realTimeTrackingBtn = this.shadowRoot.querySelector('#realTimeTracking');
         const visibilnetTrainingBtn = this.shadowRoot.querySelector('#visibilnetTraining');
         const kilovisinetTrainingBtn = this.shadowRoot.querySelector('#kilovisinetTraining');
+        const similarityCalculatorBtn = this.shadowRoot.querySelector('#similarityCalculator');
         
         envAnalysisBtn?.addEventListener('click', () => {
             console.log('Environment Analysis button clicked');
@@ -85,6 +86,12 @@ export class ToolboxSection extends HTMLElement {
             console.log('KiloVisiNet Training button clicked');
             eventBus.emit('action:kilovisinetTraining');
             console.log('Event emitted: action:kilovisinetTraining');
+        });
+
+        similarityCalculatorBtn?.addEventListener('click', () => {
+            console.log('Similarity Calculator button clicked');
+            eventBus.emit('action:similarityCalculator');
+            console.log('Event emitted: action:similarityCalculator');
         });
     }
 
@@ -165,6 +172,11 @@ export class ToolboxSection extends HTMLElement {
                 <md-filled-button id="kilovisinetTraining" class="tool-button">
                     <md-icon slot="icon">grid_4x4</md-icon>
                     Kilo VisiNet Training
+                </md-filled-button>
+                
+                <md-filled-button id="similarityCalculator" class="tool-button">
+                    <md-icon slot="icon">compare</md-icon>
+                    Similarity Calculator
                 </md-filled-button>
             </div>
         `;

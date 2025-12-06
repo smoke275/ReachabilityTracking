@@ -35,6 +35,7 @@ import './components/VisibilityWindow.js';
 import './components/RRTWindow.js';
 import './components/VisibilNetTrainingWindow.js';
 import './components/KiloVisiNetTrainingWindow.js';
+import './components/SimilarityCalculatorWindow.js';
 import { ActiveTrackingWindow } from './components/ActiveTrackingWindow.js';
 import { RealTimeTrackingWindow } from './components/RealTimeTrackingWindow.js';
 
@@ -50,6 +51,7 @@ import { IntruderService } from './services/IntruderService.js';
 import { SensorModelService } from './services/SensorModelService.js';
 import { visibilnetService } from './services/VisibilNetService.js';
 import { kilovisinetService } from './services/KiloVisiNetService.js';
+import { similarityCalculatorService } from './services/SimilarityCalculatorService.js';
 import { activeTrackingService } from './services/ActiveTrackingService.js';
 import { realTimeTrackingService } from './services/RealTimeTrackingService.js';
 import { eventBus } from './utils/EventBus.js';
@@ -67,6 +69,7 @@ class App {
         this.evaderFutureSetService = new EvaderFutureSetService();
         this.intruderService = new IntruderService();
         this.sensorModelService = new SensorModelService();
+        this.similarityCalculatorService = similarityCalculatorService;
         this.canvasController = null;
         this.analysisWindow = null;
         this.evaderWindow = null;
@@ -75,6 +78,7 @@ class App {
         this.visibilityWindow = null;
         this.visibilnetWindow = null;
         this.kilovisinetWindow = null;
+        this.similarityWindow = null;
         this.rrtWindow = null;
         this.activeTrackingWindow = null;
         this.realTimeTrackingWindow = null;
@@ -141,6 +145,13 @@ class App {
         this.kilovisinetWindow = document.createElement('kilovisinet-training-window');
         document.body.appendChild(this.kilovisinetWindow);
         console.log('KiloVisiNet Training window created and appended:', this.kilovisinetWindow);
+
+        // Initialize Similarity Calculator window
+        console.log('Creating Similarity Calculator window...');
+        this.similarityWindow = document.createElement('similarity-calculator-window');
+        console.log('Similarity Calculator window element created:', this.similarityWindow);
+        document.body.appendChild(this.similarityWindow);
+        console.log('Similarity Calculator window created and appended:', this.similarityWindow);
 
         // Initialize RRT window
         console.log('Creating RRT window...');
@@ -303,6 +314,7 @@ class App {
         eventBus.on('action:visibilityAnalysis', () => this.showVisibilityWindow());
         eventBus.on('action:visibilnetTraining', () => this.showVisibilNetWindow());
         eventBus.on('action:kilovisinetTraining', () => this.showKiloVisiNetWindow());
+        eventBus.on('action:similarityCalculator', () => this.showSimilarityWindow());
 
         // RRT tracking actions
         eventBus.on('action:rrtTracking', () => this.showRRTWindow());
@@ -414,27 +426,36 @@ class App {
         eventBus.on('evaderFutureSet:clear', () => this.clearEvaderFutureSet());
 
         // Intruder events
-        eventBus.on('intruder:positionUpdate', (state) => this.updateIntruderVisualization(state));
+        eventBus.on('intruder:positionUpdate', (state) => {
+            this.updateIntruderVisualization(state);
+            this.autoSavePursuerSettings();
+        });
         eventBus.on('intruder:initialized', (state) => {
             if (this.canvasController) {
                 this.canvasController.setIntruderState(state);
                 this.canvasController.redraw();
             }
+            this.autoSavePursuerSettings();
         });
         eventBus.on('intruder:reset', () => {
             if (this.canvasController) {
                 this.canvasController.clearIntruderState();
                 this.canvasController.redraw();
             }
+            // Clear pursuer from saved state
+            this.clearPursuerFromStorage();
         });
         eventBus.on('canvas:placeIntruder', (position) => {
             this.intruderService.initialize(position.x, position.y, 0);
+            this.autoSavePursuerSettings();
         });
         eventBus.on('intruder:setSpeed', (speed) => {
             this.intruderService.setSpeed(speed);
+            this.autoSavePursuerSettings();
         });
         eventBus.on('intruder:setAngularSpeed', (omega) => {
             this.intruderService.setAngularSpeed(omega);
+            this.autoSavePursuerSettings();
         });
 
         // Reduction level from AnalysisWindow slider
@@ -498,6 +519,11 @@ class App {
                 speed: intruderState.speed,
                 angularSpeed: intruderState.angularSpeed
             };
+        } else {
+            // Explicitly ensure pursuer is not in saved data if position is null
+            if (data.agents?.pursuer) {
+                delete data.agents.pursuer;
+            }
         }
         if (evaderState?.position) {
             data.agents = data.agents || {};
@@ -588,10 +614,12 @@ class App {
     updateObstaclesForAllServices() {
         if (this.canvasController) {
             const polygons = this.canvasController.getPolygons();
+            const bounds = this.canvasController.getWorldViewBounds();
             this.evaderService.setObstacles(polygons);
             this.intruderService.setObstacles(polygons);
             this.sensorModelService.setObstacles(polygons);
             activeTrackingService.setObstacles(polygons);
+            similarityCalculatorService.setEnvironment(polygons, bounds);
             // Also set sensor model service reference
             activeTrackingService.setSensorModelService(this.sensorModelService);
             console.log(`Updated obstacles for all services: ${polygons.length} polygons`);
@@ -621,6 +649,11 @@ class App {
                 speed: intruderState.speed,
                 angularSpeed: intruderState.angularSpeed
             };
+        } else {
+            // Explicitly ensure pursuer is not in exported data if position is null
+            if (data.agents?.pursuer) {
+                delete data.agents.pursuer;
+            }
         }
         if (evaderState?.position) {
             data.agents = data.agents || {};
@@ -766,6 +799,71 @@ class App {
         }
     }
 
+    autoSavePursuerSettings() {
+        try {
+            // Load existing data to preserve polygons and other settings
+            const existingData = this.storageService.load();
+            const intruderState = this.intruderService.getState();
+            
+            if (!intruderState?.position) {
+                // No pursuer placed yet, nothing to save
+                return;
+            }
+            
+            const pursuerSettings = {
+                position: intruderState.position,
+                heading: intruderState.heading,
+                speed: intruderState.speed,
+                angularSpeed: intruderState.angularSpeed
+            };
+            
+            if (existingData.success) {
+                // Update the pursuer settings
+                existingData.data.agents = existingData.data.agents || {};
+                existingData.data.agents.pursuer = pursuerSettings;
+                // Save back to localStorage
+                this.storageService.save(existingData.data);
+            } else {
+                // If no existing data, create minimal data with just pursuer settings
+                const data = {
+                    version: '1.0',
+                    polygons: [],
+                    camera: { x: 0, y: 0, zoom: 1.0 },
+                    agents: {
+                        pursuer: pursuerSettings
+                    }
+                };
+                this.storageService.save(data);
+            }
+            console.log('Pursuer settings auto-saved:', pursuerSettings);
+        } catch (error) {
+            console.error('Error auto-saving pursuer settings:', error);
+        }
+    }
+
+    clearPursuerFromStorage() {
+        try {
+            // Load existing data to preserve other settings
+            const existingData = this.storageService.load();
+            
+            if (existingData.success && existingData.data.agents?.pursuer) {
+                // Remove pursuer from saved data
+                delete existingData.data.agents.pursuer;
+                
+                // If agents object is now empty, remove it too
+                if (Object.keys(existingData.data.agents).length === 0) {
+                    delete existingData.data.agents;
+                }
+                
+                // Save back to localStorage
+                this.storageService.save(existingData.data);
+                console.log('Pursuer cleared from storage');
+            }
+        } catch (error) {
+            console.error('Error clearing pursuer from storage:', error);
+        }
+    }
+
     showNotification(message, type = 'info') {
         // Only show error messages
         if (type === 'error') {
@@ -874,6 +972,22 @@ class App {
         } else {
             console.error('KiloVisiNet window not initialized');
             alert('KiloVisiNet window not initialized. Please refresh the page.');
+        }
+    }
+
+    showSimilarityWindow() {
+        console.log('showSimilarityWindow called');
+        console.log('similarityWindow:', this.similarityWindow);
+        if (this.similarityWindow) {
+            try {
+                this.similarityWindow.show();
+                console.log('Similarity Calculator window shown');
+            } catch (error) {
+                console.error('Error showing Similarity Calculator window:', error);
+            }
+        } else {
+            console.error('Similarity Calculator window not initialized');
+            alert('Similarity Calculator window not initialized. Please refresh the page.');
         }
     }
 
