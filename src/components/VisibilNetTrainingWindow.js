@@ -53,6 +53,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const generateDataBtn = this.shadowRoot.querySelector('#generateData');
         const trainModelBtn = this.shadowRoot.querySelector('#trainModel');
         const togglePredictionBtn = this.shadowRoot.querySelector('#togglePrediction');
+        const measureInferenceBtn = this.shadowRoot.querySelector('#measureInference');
         const saveDataBtn = this.shadowRoot.querySelector('#saveData');
         const loadDataBtn = this.shadowRoot.querySelector('#loadData');
         const displaySamplesBtn = this.shadowRoot.querySelector('#displaySamples');
@@ -99,6 +100,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const continueTrainingBtn = this.shadowRoot.querySelector('#continueTraining');
         continueTrainingBtn?.addEventListener('click', () => this.continueTraining());
         togglePredictionBtn?.addEventListener('click', () => this.togglePrediction());
+        measureInferenceBtn?.addEventListener('click', () => this.measureInferenceTime());
         saveDataBtn?.addEventListener('click', () => this.saveTrainingData());
         loadDataBtn?.addEventListener('click', () => this.loadTrainingData());
         
@@ -276,7 +278,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const xsNorm = xs.map(([x, y]) => {
                 const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
                 const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
-                return this.fourierEncode(xNorm, yNorm, 6); // 24 features
+                return this.fourierEncode(xNorm, yNorm, 10); // 40 features
             });
             
             const inputSize = xsNorm[0].length;
@@ -337,10 +339,11 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const initialLR = 0.003;
             this.model = tf.sequential({
                 layers: [
-                    tf.layers.dense({ inputShape: [inputSize], units: 256, activation: 'swish' }),
+                    tf.layers.dense({ inputShape: [inputSize], units: 512, activation: 'swish' }),
+                    tf.layers.dense({ units: 1024, activation: 'swish' }),
+                    tf.layers.dense({ units: 1024, activation: 'swish' }),
+                    tf.layers.dense({ units: 1024, activation: 'swish' }),
                     tf.layers.dense({ units: 512, activation: 'swish' }),
-                    tf.layers.dense({ units: 512, activation: 'swish' }),
-                    tf.layers.dense({ units: 256, activation: 'swish' }),
                     tf.layers.dense({ units: outputSize, activation: 'relu' })
                 ]
             });
@@ -353,7 +356,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             });
             
             const modelInfo = this.shadowRoot.querySelector('#modelInfo');
-            modelInfo.textContent = `Arch: ${inputSize}→256→512→512→256→${outputSize} | LR: ${initialLR} | Buffer: ${this.bufferSize} train, ${this.valBufferSize} val`;
+            modelInfo.textContent = `Arch: ${inputSize}→512→1024→1024→1024→512→${outputSize} | LR: ${initialLR} | Buffer: ${this.bufferSize} train, ${this.valBufferSize} val`;
 
             // Train with replay buffer sampling (NeRF-style)
             const epochInput = this.shadowRoot.querySelector('#epochInput');
@@ -465,6 +468,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 toggleBtn.removeAttribute('disabled');
                 toggleBtn.textContent = 'Use AI Prediction';
             }
+            const measureBtn = this.shadowRoot.querySelector('#measureInference');
+            if (measureBtn) measureBtn.removeAttribute('disabled');
             const saveModelBtn = this.shadowRoot.querySelector('#saveModel');
             if (saveModelBtn) saveModelBtn.removeAttribute('disabled');
             const continueBtn = this.shadowRoot.querySelector('#continueTraining');
@@ -507,7 +512,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             yNorm = Math.max(-1, Math.min(1, yNorm));
             
             // Apply Fourier encoding
-            const fourierFeatures = this.fourierEncode(xNorm, yNorm, 6);
+            const fourierFeatures = this.fourierEncode(xNorm, yNorm, 10);
 
             // Predict ray distances
             const input = tf.tensor2d([fourierFeatures]);
@@ -871,7 +876,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const xsNorm = xs.map(([x, y]) => {
                 const xNorm = 2 * (x - xMin) / (xMax - xMin || 1) - 1;
                 const yNorm = 2 * (y - yMin) / (yMax - yMin || 1) - 1;
-                return this.fourierEncode(xNorm, yNorm, 6);
+                return this.fourierEncode(xNorm, yNorm, 10);
             });
 
             const ysNorm = ys.map(distances => 
@@ -959,7 +964,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
     }
 
     // Fourier feature encoding for better spatial representation
-    fourierEncode(x, y, numFrequencies = 6) {
+    fourierEncode(x, y, numFrequencies = 10) {
         const features = [];
         for (let i = 0; i < numFrequencies; i++) {
             const freq = Math.pow(2, i) * Math.PI;
@@ -1106,7 +1111,7 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             const yNormClamped = Math.max(-1, Math.min(1, yNorm));
             
             // Apply Fourier encoding like in training
-            const fourierFeatures = this.fourierEncode(xNormClamped, yNormClamped, 6);
+            const fourierFeatures = this.fourierEncode(xNormClamped, yNormClamped, 10);
             
             // Warning message if outside bounds
             let warningMsg = '';
@@ -1455,6 +1460,10 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                             <md-icon slot="icon">psychology</md-icon>
                             Use AI Prediction
                         </md-filled-tonal-button>
+                        <md-filled-tonal-button id="measureInference" class="tool-button" disabled>
+                            <md-icon slot="icon">timer</md-icon>
+                            Measure Inference Time
+                        </md-filled-tonal-button>
                         <div class="training-status" id="trainingStatus"></div>
                         <div id="normalizedValues"></div>
                         <canvas id="lossGraph" width="280" height="150" style="display: none; margin: 8px 0; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; background: var(--md-sys-color-surface-container);"></canvas>
@@ -1577,6 +1586,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                     
                     const toggleBtn = this.shadowRoot.querySelector('#togglePrediction');
                     if (toggleBtn) toggleBtn.removeAttribute('disabled');
+                    const measureBtn = this.shadowRoot.querySelector('#measureInference');
+                    if (measureBtn) measureBtn.removeAttribute('disabled');
                     const saveModelBtn = this.shadowRoot.querySelector('#saveModel');
                     if (saveModelBtn) saveModelBtn.removeAttribute('disabled');
                     const continueBtn = this.shadowRoot.querySelector('#continueTraining');
@@ -1598,6 +1609,97 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             console.error('Error in loadModel:', error);
             alert('Error loading model: ' + error.message);
         }
+   }
+
+    async measureInferenceTime() {
+        if (!this.model || !this.normalizationParams) {
+            this.updateTrainingStatus('Model not ready for inference.');
+            return;
+        }
+
+        this.updateTrainingStatus('Generating 2000 random points...');
+
+        eventBus.emit('visibilnet:requestEnvironment', async (data) => {
+            if (!data || !data.polygons) {
+                this.updateTrainingStatus('Error: No environment data!');
+                return;
+            }
+
+            const { polygons, bounds } = data;
+            const numPoints = 2000;
+            const points = [];
+            
+            // Import service for point checking
+            const module = await import('../services/VisibilNetService.js');
+            const service = module.visibilnetService;
+            
+            // Compute convex hull for free space checking
+            const convexHull = service.computeConvexHull(polygons);
+            
+            // Generate random points in free space
+            let attempts = 0;
+            const maxAttempts = numPoints * 100;
+            
+            while (points.length < numPoints && attempts < maxAttempts) {
+                const x = bounds.minX + Math.random() * (bounds.maxX - bounds.minX);
+                const y = bounds.minY + Math.random() * (bounds.maxY - bounds.minY);
+                const point = { x, y };
+                
+                if (service.isPointInFreeSpace(point, polygons, convexHull)) {
+                    points.push(point);
+                }
+                attempts++;
+            }
+
+            if (points.length < numPoints) {
+                this.updateTrainingStatus(`Could only generate ${points.length} valid points.`);
+            }
+
+            this.updateTrainingStatus(`Running inference on ${points.length} points...`);
+
+            try {
+                const tf = await import('@tensorflow/tfjs');
+                const { xMin, xMax, yMin, yMax } = this.normalizationParams;
+
+                // Prepare batch input
+                const batchFeatures = points.map(p => {
+                    // Normalize
+                    let xNorm = 2 * (p.x - xMin) / (xMax - xMin || 1) - 1;
+                    let yNorm = 2 * (p.y - yMin) / (yMax - yMin || 1) - 1;
+                    
+                    // Clamp
+                    xNorm = Math.max(-1, Math.min(1, xNorm));
+                    yNorm = Math.max(-1, Math.min(1, yNorm));
+                    
+                    // Fourier encode
+                    return this.fourierEncode(xNorm, yNorm, 10);
+                });
+
+                const inputTensor = tf.tensor2d(batchFeatures);
+
+                // Warmup
+                this.model.predict(tf.tensor2d([batchFeatures[0]]));
+
+                // Measure time
+                const start = performance.now();
+                const prediction = this.model.predict(inputTensor);
+                const result = await prediction.data(); // Wait for GPU/CPU execution
+                const end = performance.now();
+
+                const totalTime = end - start;
+                const perPointTime = totalTime / points.length;
+
+                this.updateTrainingStatus(`Inference: ${totalTime.toFixed(2)}ms for ${points.length} points (${perPointTime.toFixed(4)}ms/point)`);
+
+                // Cleanup
+                inputTensor.dispose();
+                prediction.dispose();
+
+            } catch (error) {
+                console.error('Inference measurement error:', error);
+                this.updateTrainingStatus(`Inference error: ${error.message}`);
+            }
+        });
     }
 }
 
