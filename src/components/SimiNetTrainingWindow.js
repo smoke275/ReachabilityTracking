@@ -26,6 +26,7 @@ export class SimiNetTrainingWindow extends HTMLElement {
         this.displaySamples = false;
         this.lossHistory = [];
         this.valLossHistory = [];
+        this.valMseHistory = [];
     }
 
     connectedCallback() {
@@ -228,6 +229,11 @@ export class SimiNetTrainingWindow extends HTMLElement {
             this.updateSampleCount(data.count);
         });
 
+        eventBus.on('siminet:trainingComplete', (data) => {
+            this.updateStatus('Training complete!');
+            this.showStats(data);
+        });
+
         // Listen for observer placement/movement (reusing similarity events for now)
         eventBus.on('similarity:observerPlaced', (data) => this.handleObserverUpdate(data));
         eventBus.on('similarity:observerMoved', (data) => this.handleObserverUpdate(data));
@@ -421,9 +427,13 @@ export class SimiNetTrainingWindow extends HTMLElement {
         const epochInput = this.shadowRoot.querySelector('#epochInput');
         const epochs = epochInput ? parseInt(epochInput.value) : 50;
 
+        const hardMiningCheck = this.shadowRoot.querySelector('#hardMiningCheck');
+        const useHardMining = hardMiningCheck ? hardMiningCheck.checked : false;
+
         if (!isContinue) {
             this.lossHistory = [];
             this.valLossHistory = [];
+            this.valMseHistory = [];
         }
         
         this.updateStatus(isContinue ? `Continuing training for ${epochs} epochs...` : `Starting training for ${epochs} epochs...`);
@@ -433,9 +443,14 @@ export class SimiNetTrainingWindow extends HTMLElement {
             if (logs.val_loss) {
                 this.valLossHistory.push(logs.val_loss);
             }
+            if (logs.val_mse) {
+                this.valMseHistory.push(logs.val_mse);
+            }
             
             const valText = logs.val_loss ? ` | Val: ${logs.val_loss.toFixed(4)}` : '';
-            this.updateStatus(`Epoch ${epoch + 1}: Loss ${logs.loss.toFixed(4)}${valText}`);
+            const mseText = logs.val_mse ? ` | Val MSE: ${logs.val_mse.toFixed(4)}` : '';
+            const lrText = logs.learningRate ? ` | LR: ${logs.learningRate.toExponential(2)}` : '';
+            this.updateStatus(`Epoch ${epoch + 1}: Loss ${logs.loss.toFixed(4)}${valText}${mseText}${lrText}`);
             this.drawLossGraph();
         };
         
@@ -448,7 +463,11 @@ export class SimiNetTrainingWindow extends HTMLElement {
         } else {
             // If no static data, use infinite training (generates data on the fly)
             // This works for both "New" and "Continue" if we are in infinite mode
-            trainingPromise = siminetService.trainSiameseModelInfinite(onEpochEnd, epochs);
+            if (useHardMining) {
+                trainingPromise = siminetService.trainHardMining(onEpochEnd, epochs);
+            } else {
+                trainingPromise = siminetService.trainSiameseModelInfinite(onEpochEnd, epochs);
+            }
         }
             
         trainingPromise.then(() => {
@@ -460,9 +479,19 @@ export class SimiNetTrainingWindow extends HTMLElement {
     }
 
     drawLossGraph() {
-        const canvas = this.shadowRoot.querySelector('#lossGraph');
-        if (!canvas || this.lossHistory.length === 0) return;
+        this.drawGraph('lossGraph', this.lossHistory, this.valLossHistory, '#4CAF50', '#FF9800');
+        this.drawGraph('mseGraph', [], this.valMseHistory, null, '#2196F3');
+    }
+
+    drawGraph(canvasId, trainData, valData, trainColor, valColor) {
+        const canvas = this.shadowRoot.querySelector('#' + canvasId);
+        if (!canvas) return;
         
+        const hasTrain = trainData && trainData.length > 0;
+        const hasVal = valData && valData.length > 0;
+        
+        if (!hasTrain && !hasVal) return;
+
         const ctx = canvas.getContext('2d');
         const width = canvas.width;
         const height = canvas.height;
@@ -474,11 +503,11 @@ export class SimiNetTrainingWindow extends HTMLElement {
         ctx.fillStyle = '#1c1b1f';
         ctx.fillRect(0, 0, width, height);
         
-        // Find max loss for scaling (include validation loss)
-        const allLosses = [...this.lossHistory, ...this.valLossHistory];
-        const maxLoss = Math.max(...allLosses);
-        const minLoss = Math.min(...allLosses);
-        const lossRange = maxLoss - minLoss || 1;
+        // Find max/min
+        const allValues = [...(trainData || []), ...(valData || [])];
+        const maxVal = Math.max(...allValues);
+        const minVal = Math.min(...allValues);
+        const range = maxVal - minVal || 1;
         
         // Draw graph background
         ctx.fillStyle = '#121212';
@@ -498,51 +527,113 @@ export class SimiNetTrainingWindow extends HTMLElement {
             ctx.fillStyle = '#aaa';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'right';
-            const val = maxLoss - (lossRange * i / 4);
+            const val = maxVal - (range * i / 4);
             ctx.fillText(val.toFixed(4), padding.left - 5, y + 3);
         }
         
-        // Draw training loss line (Green)
-        ctx.beginPath();
-        ctx.strokeStyle = '#4CAF50';
-        ctx.lineWidth = 2;
-        
-        for (let i = 0; i < this.lossHistory.length; i++) {
-            const x = padding.left + (i / (this.lossHistory.length - 1 || 1)) * graphWidth;
-            const y = padding.top + graphHeight - ((this.lossHistory[i] - minLoss) / lossRange) * graphHeight;
-            
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-
-        // Draw validation loss line (Orange)
-        if (this.valLossHistory.length > 0) {
+        // Draw training line
+        if (hasTrain && trainColor) {
             ctx.beginPath();
-            ctx.strokeStyle = '#FF9800';
+            ctx.strokeStyle = trainColor;
             ctx.lineWidth = 2;
             
-            for (let i = 0; i < this.valLossHistory.length; i++) {
-                const x = padding.left + (i / (this.valLossHistory.length - 1 || 1)) * graphWidth;
-                const y = padding.top + graphHeight - ((this.valLossHistory[i] - minLoss) / lossRange) * graphHeight;
+            for (let i = 0; i < trainData.length; i++) {
+                const x = padding.left + (i / (trainData.length - 1 || 1)) * graphWidth;
+                const y = padding.top + graphHeight - ((trainData[i] - minVal) / range) * graphHeight;
                 
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
             ctx.stroke();
+        }
+
+        // Draw validation line
+        if (hasVal && valColor) {
+            ctx.beginPath();
+            ctx.strokeStyle = valColor;
+            ctx.lineWidth = 2;
             
-            // Legend
-            ctx.fillStyle = '#4CAF50';
-            ctx.fillText('Train', width - 50, 20);
-            ctx.fillStyle = '#FF9800';
-            ctx.fillText('Val', width - 10, 20);
+            for (let i = 0; i < valData.length; i++) {
+                const x = padding.left + (i / (valData.length - 1 || 1)) * graphWidth;
+                const y = padding.top + graphHeight - ((valData[i] - minVal) / range) * graphHeight;
+                
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+        
+        // Legend
+        ctx.textAlign = 'right';
+        let legendX = width - 10;
+        
+        if (hasVal && valColor) {
+            ctx.fillStyle = valColor;
+            ctx.fillText('Val', legendX, 20);
+            legendX -= 30;
+        }
+        
+        if (hasTrain && trainColor) {
+            ctx.fillStyle = trainColor;
+            ctx.fillText('Train', legendX, 20);
         }
         
         // X-axis labels
+        const count = Math.max(trainData ? trainData.length : 0, valData ? valData.length : 0);
         ctx.fillStyle = '#aaa';
         ctx.textAlign = 'center';
         ctx.fillText('0', padding.left, height - 5);
-        ctx.fillText(this.lossHistory.length.toString(), width - padding.right, height - 5);
+        ctx.fillText(count.toString(), width - padding.right, height - 5);
+    }
+
+    showStats(stats) {
+        const modal = this.shadowRoot.querySelector('#statsModal');
+        const content = this.shadowRoot.querySelector('#statsContent');
+        const closeBtn = modal.querySelector('.modal-close');
+        
+        if (!modal || !content) return;
+        
+        const finalLoss = stats.history.loss ? stats.history.loss[stats.history.loss.length - 1] : 'N/A';
+        const finalValLoss = stats.history.val_loss ? stats.history.val_loss[stats.history.val_loss.length - 1] : 'N/A';
+        const finalValMse = stats.history.val_mse ? stats.history.val_mse[stats.history.val_mse.length - 1] : 'N/A';
+        
+        let html = `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                <div class="data-display">
+                    <div class="data-label">Total Epochs</div>
+                    <div class="data-value">${stats.epochs}</div>
+                </div>
+                <div class="data-display">
+                    <div class="data-label">Final Loss</div>
+                    <div class="data-value" style="font-size: 1.5rem;">${typeof finalLoss === 'number' ? finalLoss.toFixed(5) : finalLoss}</div>
+                </div>
+            </div>
+            
+            <div style="background: #f5f5f5; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Final Validation Loss</div>
+                <div style="font-size: 1.2rem; color: #EF6C00;">${typeof finalValLoss === 'number' ? finalValLoss.toFixed(5) : finalValLoss}</div>
+            </div>
+
+            <div style="background: #f5f5f5; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                <div style="font-weight: bold; margin-bottom: 5px;">Final Validation MSE</div>
+                <div style="font-size: 1.2rem; color: #2196F3;">${typeof finalValMse === 'number' ? finalValMse.toFixed(5) : finalValMse}</div>
+            </div>
+        `;
+        
+        content.innerHTML = html;
+        modal.classList.add('visible');
+        
+        const close = () => {
+            modal.classList.remove('visible');
+            closeBtn.removeEventListener('click', close);
+        };
+        
+        closeBtn.addEventListener('click', close);
+        
+        // Close on click outside
+        modal.onclick = (e) => {
+            if (e.target === modal) close();
+        };
     }
 
     render() {
@@ -925,6 +1016,11 @@ export class SimiNetTrainingWindow extends HTMLElement {
                             </md-outlined-text-field>
                         </div>
 
+                        <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                            <md-checkbox id="hardMiningCheck" checked></md-checkbox>
+                            <label for="hardMiningCheck" style="font-size: 0.9rem; cursor: pointer;">Use Hard Mining (3-Bucket + Sort)</label>
+                        </div>
+
                         <div class="button-group">
                             <md-filled-button id="trainModel">
                                 <md-icon slot="icon">play_arrow</md-icon>
@@ -957,7 +1053,10 @@ export class SimiNetTrainingWindow extends HTMLElement {
                         </md-outlined-button>
                         
                         <div class="graph-container" id="graphContainer">
+                            <div style="font-size: 0.75rem; color: #aaa; margin-bottom: 4px;">BCE Loss</div>
                             <canvas id="lossGraph" width="400" height="150"></canvas>
+                            <div style="font-size: 0.75rem; color: #aaa; margin: 8px 0 4px 0;">MSE Loss</div>
+                            <canvas id="mseGraph" width="400" height="150"></canvas>
                         </div>
 
                         <md-filled-tonal-button id="togglePrediction" style="width: 100%; margin-top: 8px;">
@@ -982,6 +1081,14 @@ export class SimiNetTrainingWindow extends HTMLElement {
                     <span class="modal-close">&times;</span>
                     <h3>Sample Data</h3>
                     <pre id="sampleData"></pre>
+                </div>
+            </div>
+
+            <div id="statsModal" class="modal">
+                <div class="modal-content">
+                    <span class="modal-close">&times;</span>
+                    <h3>Training Statistics</h3>
+                    <div id="statsContent"></div>
                 </div>
             </div>
         `;

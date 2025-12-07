@@ -10,8 +10,8 @@ import { visibilnetService } from './VisibilNetService.js';
 import { similarityCalculatorService } from './SimilarityCalculatorService.js';
 import * as tf from '@tensorflow/tfjs';
 
-// Define custom layer for Absolute Difference
-class AbsDiffLayer extends tf.layers.Layer {
+// Define custom layer for Signed Difference (to preserve directionality)
+class DiffLayer extends tf.layers.Layer {
     constructor(config) {
         super(config || {});
     }
@@ -23,15 +23,57 @@ class AbsDiffLayer extends tf.layers.Layer {
     call(inputs) {
         return tf.tidy(() => {
             const [a, b] = inputs;
-            return tf.abs(tf.sub(a, b));
+            return tf.sub(a, b);
         });
     }
 
     static get className() {
-        return 'AbsDiffLayer';
+        return 'DiffLayer';
     }
 }
-tf.serialization.registerClass(AbsDiffLayer);
+tf.serialization.registerClass(DiffLayer);
+
+class GeometricFeaturesLayer extends tf.layers.Layer {
+    constructor(config) {
+        super(config || {});
+    }
+
+    computeOutputShape(inputShape) {
+        // inputShape is [batch, 2] for both inputs
+        // Output is [batch, 4] (dist, angle, diffX, diffY)
+        return [inputShape[0][0], 4];
+    }
+
+    call(inputs) {
+        return tf.tidy(() => {
+            const [a, b] = inputs;
+            // 1. Cartesian Difference
+            // a, b are [-1, 1]. diff is [-2, 2].
+            const diff = tf.sub(b, a);
+            // Normalize to [-1, 1]
+            const diffNorm = tf.div(diff, 2.0);
+            
+            // 2. Euclidean Distance
+            // Max dist in [-1, 1] square is sqrt(2^2 + 2^2) = 2.828
+            const dist = tf.norm(diff, 'euclidean', -1, true);
+            const distNorm = tf.div(dist, 2.828);
+            
+            // 3. Angle
+            // atan2(y, x) -> [-PI, PI]
+            const dy = tf.slice(diff, [0, 1], [-1, 1]);
+            const dx = tf.slice(diff, [0, 0], [-1, 1]);
+            const angle = tf.atan2(dy, dx);
+            const angleNorm = tf.div(angle, Math.PI); // [-1, 1]
+            
+            return tf.concat([distNorm, angleNorm, diffNorm], -1);
+        });
+    }
+
+    static get className() {
+        return 'GeometricFeaturesLayer';
+    }
+}
+tf.serialization.registerClass(GeometricFeaturesLayer);
 
 export class SimiNetService {
     constructor() {
@@ -651,6 +693,10 @@ export class SimiNetService {
         // Input size is 24 (6 frequencies * 4 components)
         const inputA = tf.input({shape: [24]});
         const inputB = tf.input({shape: [24]});
+        
+        // Coordinate Inputs (Normalized [-1, 1])
+        const coordInputA = tf.input({shape: [2]});
+        const coordInputB = tf.input({shape: [2]});
 
         // 3. Feature Extraction
         const embedA = backboneFeatures.apply(inputA);
@@ -662,9 +708,9 @@ export class SimiNetService {
         // Element-wise multiplication
         const multiply = tf.layers.multiply().apply([embedA, embedB]);
         
-        // Absolute difference: |a - b|
-        // using custom AbsDiffLayer
-        const absDiff = new AbsDiffLayer().apply([embedA, embedB]);
+        // Signed difference: a - b
+        // using custom DiffLayer
+        const diff = new DiffLayer().apply([embedA, embedB]);
         
         // Minimum and Maximum
         const min = tf.layers.minimum().apply([embedA, embedB]);
@@ -672,49 +718,64 @@ export class SimiNetService {
         
         // Cosine Similarity
         const cosSim = tf.layers.dot({axes: 1, normalize: true}).apply([embedA, embedB]);
+
+        // Geometric Features
+        const geometricFeatures = new GeometricFeaturesLayer().apply([coordInputA, coordInputB]);
         
         // Concatenate all features
         const concatenated = tf.layers.concatenate().apply([
             inputA, 
             inputB, 
             multiply, 
-            absDiff, 
+            diff, 
             min, 
             max, 
-            cosSim
+            cosSim,
+            geometricFeatures
         ]);
 
-        // 5. Head Architecture (The Comparator)
-        // Dense(512) -> BN -> Dropout(0.1)
-        let x = tf.layers.dense({units: 512, activation: 'swish', name: 'siamese_head_dense_1'}).apply(concatenated);
-        x = tf.layers.batchNormalization({name: 'siamese_head_bn_1'}).apply(x);
-        x = tf.layers.dropout({rate: 0.1, name: 'siamese_head_dropout_1'}).apply(x);
+        // 5. Head Architecture (The Comparator) - ResNet Style
+        // 1. Initial Expansion
+        let x = tf.layers.batchNormalization({name: 'head_bn_input'}).apply(concatenated);
+        x = tf.layers.dense({units: 1024, activation: 'swish', name: 'head_dense_1'}).apply(x);
 
-        // Dense(256) -> BN
-        x = tf.layers.dense({units: 256, activation: 'swish', name: 'siamese_head_dense_2'}).apply(x);
-        x = tf.layers.batchNormalization({name: 'siamese_head_bn_2'}).apply(x);
+        // 2. Residual Block A (The "Deep Thought" Block)
+        let skipA = x; 
+        x = tf.layers.dense({units: 1024, activation: 'swish', name: 'res_a_dense_1'}).apply(x);
+        x = tf.layers.batchNormalization({name: 'res_a_bn'}).apply(x);
+        x = tf.layers.dropout({rate: 0.1, name: 'res_a_dropout'}).apply(x);
+        x = tf.layers.dense({units: 1024, activation: 'swish', name: 'res_a_dense_2'}).apply(x);
+        x = tf.layers.add({name: 'res_a_add'}).apply([x, skipA]); 
 
-        // Dense(128) -> BN
-        x = tf.layers.dense({units: 128, activation: 'swish', name: 'siamese_head_dense_3'}).apply(x);
-        x = tf.layers.batchNormalization({name: 'siamese_head_bn_3'}).apply(x);
+        // 3. Residual Block B (Refinement)
+        let skipB = x;
+        x = tf.layers.dense({units: 1024, activation: 'swish', name: 'res_b_dense_1'}).apply(x);
+        x = tf.layers.batchNormalization({name: 'res_b_bn'}).apply(x);
+        x = tf.layers.dense({units: 1024, activation: 'swish', name: 'res_b_dense_2'}).apply(x);
+        x = tf.layers.add({name: 'res_b_add'}).apply([x, skipB]);
 
-        // Dense(32)
-        x = tf.layers.dense({units: 32, activation: 'swish', name: 'siamese_head_dense_4'}).apply(x);
+        // 4. Compression
+        x = tf.layers.dense({units: 512, activation: 'swish', name: 'head_compress_1'}).apply(x);
+        x = tf.layers.dense({units: 256, activation: 'swish', name: 'head_compress_2'}).apply(x);
 
-        // Output
-        const output = tf.layers.dense({units: 1, activation: 'sigmoid', name: 'siamese_head_output'}).apply(x);
+        // 5. Output (Linear Logits)
+        const output = tf.layers.dense({units: 1, activation: 'linear', name: 'siamese_head_output'}).apply(x);
 
         // 6. Create Model
         const siameseModel = tf.model({
-            inputs: [inputA, inputB],
+            inputs: [inputA, inputB, coordInputA, coordInputB],
             outputs: output,
             name: 'siamese_network'
         });
 
+        // Custom metrics for logits
+        const accuracy = (yTrue, yPred) => tf.metrics.binaryAccuracy(yTrue, tf.sigmoid(yPred));
+        const mse = (yTrue, yPred) => tf.metrics.meanSquaredError(yTrue, tf.sigmoid(yPred));
+
         siameseModel.compile({
             optimizer: tf.train.adam(0.001),
-            loss: 'meanSquaredError',
-            metrics: ['mse']
+            loss: tf.losses.sigmoidCrossEntropy,
+            metrics: [mse, accuracy]
         });
 
         console.log('Siamese Network created:', siameseModel.summary());
@@ -750,6 +811,8 @@ export class SimiNetService {
         // Prepare tensors
         const inputsA = [];
         const inputsB = [];
+        const coordsA = [];
+        const coordsB = [];
         const labels = [];
 
         for (const sample of this.trainingData) {
@@ -762,23 +825,26 @@ export class SimiNetService {
             
             inputsA.push(encP1);
             inputsB.push(encP2);
+            coordsA.push(normP1);
+            coordsB.push(normP2);
             labels.push(sample.similarity);
         }
 
         const tensorA = tf.tensor2d(inputsA);
         const tensorB = tf.tensor2d(inputsB);
+        const tensorCoordsA = tf.tensor2d(coordsA);
+        const tensorCoordsB = tf.tensor2d(coordsB);
         const tensorLabels = tf.tensor2d(labels, [labels.length, 1]);
 
         console.log('Starting training...');
         
-        await this.siameseModel.fit([tensorA, tensorB], tensorLabels, {
+        const history = await this.siameseModel.fit([tensorA, tensorB, tensorCoordsA, tensorCoordsB], tensorLabels, {
             epochs: epochs,
             batchSize: 128, // Increased batch size for better gradient estimates
             shuffle: true,
             validationSplit: 0.2,
             callbacks: [
-                // Stop training if validation loss doesn't improve for 20 epochs (increased from 10 for stability)
-                tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 20 }),
+                // Early stopping removed to prevent premature completion
                 {
                     onEpochEnd: (epoch, logs) => {
                         console.log(`Epoch ${epoch}: loss=${logs.loss.toFixed(4)} val_loss=${logs.val_loss ? logs.val_loss.toFixed(4) : 'N/A'}`);
@@ -791,17 +857,34 @@ export class SimiNetService {
                             console.log(`Decaying learning rate to ${newLr.toFixed(6)}`);
                         }
 
-                        if (onEpochEnd) onEpochEnd(epoch, logs);
+                        if (onEpochEnd) {
+                            onEpochEnd(epoch, {
+                                ...logs,
+                                learningRate: this.siameseModel.optimizer.learningRate
+                            });
+                        }
                     }
                 }
             ]
         });
 
         console.log('Training complete');
+        console.log('Final Stats:', {
+            epochs: history.epoch.length,
+            finalLoss: history.history.loss[history.history.loss.length - 1],
+            finalValLoss: history.history.val_loss ? history.history.val_loss[history.history.val_loss.length - 1] : 'N/A'
+        });
+        
+        eventBus.emit('siminet:trainingComplete', {
+            epochs: history.epoch.length,
+            history: history.history
+        });
         
         // Cleanup tensors
         tensorA.dispose();
         tensorB.dispose();
+        tensorCoordsA.dispose();
+        tensorCoordsB.dispose();
         tensorLabels.dispose();
     }
 
@@ -830,6 +913,8 @@ export class SimiNetService {
         // Prepare tensors (same as trainSiameseModel)
         const inputsA = [];
         const inputsB = [];
+        const coordsA = [];
+        const coordsB = [];
         const labels = [];
 
         for (const sample of this.trainingData) {
@@ -841,16 +926,20 @@ export class SimiNetService {
             
             inputsA.push(encP1);
             inputsB.push(encP2);
+            coordsA.push(normP1);
+            coordsB.push(normP2);
             labels.push(sample.similarity);
         }
 
         const tensorA = tf.tensor2d(inputsA);
         const tensorB = tf.tensor2d(inputsB);
+        const tensorCoordsA = tf.tensor2d(coordsA);
+        const tensorCoordsB = tf.tensor2d(coordsB);
         const tensorLabels = tf.tensor2d(labels, [labels.length, 1]);
 
         console.log('Continuing training...');
         
-        await this.siameseModel.fit([tensorA, tensorB], tensorLabels, {
+        await this.siameseModel.fit([tensorA, tensorB, tensorCoordsA, tensorCoordsB], tensorLabels, {
             epochs: epochs,
             batchSize: 32,
             shuffle: true,
@@ -858,7 +947,12 @@ export class SimiNetService {
             callbacks: {
                 onEpochEnd: (epoch, logs) => {
                     console.log(`Cont. Epoch ${epoch}: loss=${logs.loss.toFixed(4)}`);
-                    if (onEpochEnd) onEpochEnd(epoch, logs);
+                    if (onEpochEnd) {
+                        onEpochEnd(epoch, {
+                            ...logs,
+                            learningRate: this.siameseModel.optimizer.learningRate
+                        });
+                    }
                 }
             }
         });
@@ -867,6 +961,8 @@ export class SimiNetService {
         
         tensorA.dispose();
         tensorB.dispose();
+        tensorCoordsA.dispose();
+        tensorCoordsB.dispose();
         tensorLabels.dispose();
     }
 
@@ -942,11 +1038,15 @@ export class SimiNetService {
 
             this.siameseModel = await tf.loadLayersModel(tf.io.browserFiles(modelFiles));
             
+            // Custom metrics for logits
+            const accuracy = (yTrue, yPred) => tf.metrics.binaryAccuracy(yTrue, tf.sigmoid(yPred));
+            const mse = (yTrue, yPred) => tf.metrics.meanSquaredError(yTrue, tf.sigmoid(yPred));
+
             // Recompile the model to ensure it's ready for training/prediction
             this.siameseModel.compile({
                 optimizer: tf.train.adam(0.001),
-                loss: 'meanSquaredError',
-                metrics: ['mse']
+                loss: tf.losses.sigmoidCrossEntropy,
+                metrics: [mse, accuracy]
             });
             
             console.log('Siamese model loaded:', this.siameseModel.summary());
@@ -972,8 +1072,11 @@ export class SimiNetService {
             
             const tensorA = tf.tensor2d([encP1]);
             const tensorB = tf.tensor2d([encP2]);
+            const tensorCoordA = tf.tensor2d([normP1]);
+            const tensorCoordB = tf.tensor2d([normP2]);
             
-            const prediction = this.siameseModel.predict([tensorA, tensorB]);
+            const logits = this.siameseModel.predict([tensorA, tensorB, tensorCoordA, tensorCoordB]);
+            const prediction = tf.sigmoid(logits);
             return prediction.dataSync()[0];
         });
     }
@@ -1066,7 +1169,7 @@ export class SimiNetService {
             
             const mcResult1 = this.calculateMCSimilarity(poly1, poly2, 2000, this.bounds);
             const mcResult2 = this.calculateMCSimilarity(poly2, poly1, 2000, this.bounds);
-            
+
             return [
                 { p1, p2, similarity: mcResult1 },
                 { p1: p2, p2: p1, similarity: mcResult2 }
@@ -1121,6 +1224,12 @@ export class SimiNetService {
         let patienceCounter = 0;
         const patience = 15; // Increased patience to 15 to handle noise in generated batches
 
+        const fullHistory = {
+            loss: [],
+            val_loss: [],
+            val_mse: []
+        };
+
         for (let epoch = 0; epoch < epochs; epoch++) {
             // 1. Generate a balanced batch on the fly
             // Note: This is synchronous/blocking for now, might need to be async or web worker
@@ -1135,6 +1244,8 @@ export class SimiNetService {
             // 2. Prepare tensors
             const inputsA = [];
             const inputsB = [];
+            const coordsA = [];
+            const coordsB = [];
             const labels = [];
 
             for (const sample of batchData) {
@@ -1146,15 +1257,19 @@ export class SimiNetService {
                 
                 inputsA.push(encP1);
                 inputsB.push(encP2);
+                coordsA.push(normP1);
+                coordsB.push(normP2);
                 labels.push(sample.similarity);
             }
 
             const tensorA = tf.tensor2d(inputsA);
             const tensorB = tf.tensor2d(inputsB);
+            const tensorCoordsA = tf.tensor2d(coordsA);
+            const tensorCoordsB = tf.tensor2d(coordsB);
             const tensorLabels = tf.tensor2d(labels, [labels.length, 1]);
 
             // 3. Train on this batch (1 epoch)
-            const history = await this.siameseModel.fit([tensorA, tensorB], tensorLabels, {
+            const history = await this.siameseModel.fit([tensorA, tensorB, tensorCoordsA, tensorCoordsB], tensorLabels, {
                 epochs: 1,
                 batchSize: 128, // Increased batch size
                 shuffle: true,
@@ -1164,6 +1279,12 @@ export class SimiNetService {
             
             const loss = history.history.loss[0];
             const valLoss = history.history.val_loss ? history.history.val_loss[0] : null;
+            const mse = history.history.mse ? history.history.mse[0] : null;
+            const valMse = history.history.val_mse ? history.history.val_mse[0] : null;
+            
+            fullHistory.loss.push(loss);
+            if (valLoss !== null) fullHistory.val_loss.push(valLoss);
+            if (valMse !== null) fullHistory.val_mse.push(valMse);
             
             console.log(`Epoch ${epoch}: loss=${loss.toFixed(4)} val_loss=${valLoss ? valLoss.toFixed(4) : 'N/A'}`);
             
@@ -1185,16 +1306,212 @@ export class SimiNetService {
             }
             
             if (onEpochEnd) {
-                onEpochEnd(epoch, { loss, val_loss: valLoss });
+                onEpochEnd(epoch, { 
+                    loss, 
+                    val_loss: valLoss,
+                    mse,
+                    val_mse: valMse,
+                    learningRate: this.siameseModel.optimizer.learningRate
+                });
             }
 
             // Cleanup
             tensorA.dispose();
             tensorB.dispose();
+            tensorCoordsA.dispose();
+            tensorCoordsB.dispose();
             tensorLabels.dispose();
         }
 
         console.log('Infinite Training complete');
+        console.log('Final Stats:', {
+            epochs: epochs,
+            finalLoss: fullHistory.loss[fullHistory.loss.length - 1],
+            finalValLoss: fullHistory.val_loss.length > 0 ? fullHistory.val_loss[fullHistory.val_loss.length - 1] : 'N/A'
+        });
+
+        eventBus.emit('siminet:trainingComplete', {
+            epochs: epochs,
+            history: fullHistory
+        });
+    }
+
+    /**
+     * Train using Hard Example Mining
+     * 1. Generate 4x data
+     * 2. Predict and calculate error
+     * 3. Select top 1x data with highest error
+     * 4. Train on that
+     * @param {Function} onEpochEnd - Callback for progress updates
+     * @param {number} epochs - Number of epochs to train
+     * @param {number} batchSize - Size of each batch (default 1024)
+     */
+    async trainHardMining(onEpochEnd, epochs = 50, batchSize = 1024) {
+        if (!this.siameseModel) {
+            await this.createSiameseModel();
+        }
+        
+        const tf = await import('@tensorflow/tfjs');
+        console.log(`Starting Hard Mining Training: ${epochs} epochs, target batch size ${batchSize}`);
+
+        const boundsToUse = this.bounds;
+        if (!boundsToUse) {
+            console.error('No environment bounds available.');
+            return;
+        }
+
+        // Adaptive Learning Rate State
+        let bestValLoss = Infinity;
+        let patienceCounter = 0;
+        const patience = 15;
+
+        const fullHistory = {
+            loss: [],
+            val_loss: [],
+            val_mse: []
+        };
+
+        for (let epoch = 0; epoch < epochs; epoch++) {
+            // Step 1: Wide Generation (4x batch size)
+            await tf.nextFrame();
+            const candidateCount = batchSize * 4;
+            // generateBalancedBatch returns an array of objects {p1, p2, similarity}
+            const candidates = await this.generateBalancedBatch(candidateCount);
+            
+            // Step 2: Quick Check (Inference)
+            // Prepare tensors for all candidates
+            const inputsA = [];
+            const inputsB = [];
+            const coordsA = [];
+            const coordsB = [];
+            const truths = [];
+
+            for (const sample of candidates) {
+                const normP1 = this.normalizeCoordinates(sample.p1.x, sample.p1.y, boundsToUse);
+                const normP2 = this.normalizeCoordinates(sample.p2.x, sample.p2.y, boundsToUse);
+                
+                const encP1 = this.positionalEncoding(normP1[0], normP1[1]);
+                const encP2 = this.positionalEncoding(normP2[0], normP2[1]);
+                
+                inputsA.push(encP1);
+                inputsB.push(encP2);
+                coordsA.push(normP1);
+                coordsB.push(normP2);
+                truths.push(sample.similarity);
+            }
+
+            const tensorA_all = tf.tensor2d(inputsA);
+            const tensorB_all = tf.tensor2d(inputsB);
+            const tensorCoordsA_all = tf.tensor2d(coordsA);
+            const tensorCoordsB_all = tf.tensor2d(coordsB);
+            
+            // Predict without tracking gradients
+            const predictions = tf.tidy(() => {
+                const logits = this.siameseModel.predict([tensorA_all, tensorB_all, tensorCoordsA_all, tensorCoordsB_all]);
+                return tf.sigmoid(logits).dataSync();
+            });
+            
+            // Step 3: Hard Sort
+            const errors = [];
+            for (let i = 0; i < candidates.length; i++) {
+                const pred = predictions[i];
+                const truth = truths[i];
+                const error = Math.abs(pred - truth);
+                errors.push({ index: i, error: error });
+            }
+            
+            // Sort by error descending
+            errors.sort((a, b) => b.error - a.error);
+            
+            // Select top batchSize
+            const topIndices = errors.slice(0, batchSize).map(e => e.index);
+            
+            // Step 4: Targeted Train
+            // Construct training batch
+            const trainInputsA = [];
+            const trainInputsB = [];
+            const trainCoordsA = [];
+            const trainCoordsB = [];
+            const trainLabels = [];
+            
+            for (const idx of topIndices) {
+                trainInputsA.push(inputsA[idx]);
+                trainInputsB.push(inputsB[idx]);
+                trainCoordsA.push(coordsA[idx]);
+                trainCoordsB.push(coordsB[idx]);
+                trainLabels.push(truths[idx]);
+            }
+            
+            const trainTensorA = tf.tensor2d(trainInputsA);
+            const trainTensorB = tf.tensor2d(trainInputsB);
+            const trainTensorCoordsA = tf.tensor2d(trainCoordsA);
+            const trainTensorCoordsB = tf.tensor2d(trainCoordsB);
+            const trainTensorLabels = tf.tensor2d(trainLabels, [trainLabels.length, 1]);
+            
+            // Train
+            const history = await this.siameseModel.fit([trainTensorA, trainTensorB, trainTensorCoordsA, trainTensorCoordsB], trainTensorLabels, {
+                epochs: 1,
+                batchSize: 128, // Internal batch size for the update
+                shuffle: true,
+                validationSplit: 0.2,
+                verbose: 0
+            });
+            
+            // Cleanup
+            tensorA_all.dispose();
+            tensorB_all.dispose();
+            tensorCoordsA_all.dispose();
+            tensorCoordsB_all.dispose();
+            trainTensorA.dispose();
+            trainTensorB.dispose();
+            trainTensorCoordsA.dispose();
+            trainTensorCoordsB.dispose();
+            trainTensorLabels.dispose();
+            
+            // Logging and LR adjustment
+            const loss = history.history.loss[0];
+            const valLoss = history.history.val_loss ? history.history.val_loss[0] : null;
+            const mse = history.history.mse ? history.history.mse[0] : null;
+            const valMse = history.history.val_mse ? history.history.val_mse[0] : null;
+            
+            fullHistory.loss.push(loss);
+            if (valLoss !== null) fullHistory.val_loss.push(valLoss);
+            if (valMse !== null) fullHistory.val_mse.push(valMse);
+            
+            console.log(`Epoch ${epoch}: loss=${loss.toFixed(4)} val_loss=${valLoss ? valLoss.toFixed(4) : 'N/A'} (Hard Mining)`);
+            
+            if (valLoss !== null) {
+                if (valLoss < bestValLoss) {
+                    bestValLoss = valLoss;
+                    patienceCounter = 0;
+                } else {
+                    patienceCounter++;
+                    if (patienceCounter >= patience) {
+                        const currentLr = this.siameseModel.optimizer.learningRate;
+                        const newLr = Math.max(currentLr * 0.8, 1e-6);
+                        this.siameseModel.optimizer.learningRate = newLr;
+                        console.log(`Validation loss plateaued. Reducing LR to ${newLr.toFixed(6)}`);
+                        patienceCounter = 0;
+                    }
+                }
+            }
+            
+            if (onEpochEnd) {
+                onEpochEnd(epoch, { 
+                    loss, 
+                    val_loss: valLoss,
+                    mse,
+                    val_mse: valMse,
+                    learningRate: this.siameseModel.optimizer.learningRate
+                });
+            }
+        }
+        
+        console.log('Hard Mining Training complete');
+        eventBus.emit('siminet:trainingComplete', {
+            epochs: epochs,
+            history: fullHistory
+        });
     }
 }
 
