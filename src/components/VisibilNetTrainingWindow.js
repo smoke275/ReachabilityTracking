@@ -99,6 +99,10 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const continueTrainingBtn = this.shadowRoot.querySelector('#continueTraining');
         continueTrainingBtn?.addEventListener('click', () => this.continueTraining());
         togglePredictionBtn?.addEventListener('click', () => this.togglePrediction());
+        
+        const measureInferenceBtn = this.shadowRoot.querySelector('#measureInference');
+        measureInferenceBtn?.addEventListener('click', () => this.measureInferenceTime());
+
         saveDataBtn?.addEventListener('click', () => this.saveTrainingData());
         loadDataBtn?.addEventListener('click', () => this.loadTrainingData());
         
@@ -469,6 +473,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
             if (saveModelBtn) saveModelBtn.removeAttribute('disabled');
             const continueBtn = this.shadowRoot.querySelector('#continueTraining');
             if (continueBtn) continueBtn.removeAttribute('disabled');
+            const measureBtn = this.shadowRoot.querySelector('#measureInference');
+            if (measureBtn) measureBtn.removeAttribute('disabled');
 
         } catch (error) {
             console.error('Training error:', error);
@@ -1455,6 +1461,10 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                             <md-icon slot="icon">psychology</md-icon>
                             Use AI Prediction
                         </md-filled-tonal-button>
+                        <md-outlined-button id="measureInference" class="tool-button" disabled>
+                            <md-icon slot="icon">timer</md-icon>
+                            Measure Inference Time
+                        </md-outlined-button>
                         <div class="training-status" id="trainingStatus"></div>
                         <div id="normalizedValues"></div>
                         <canvas id="lossGraph" width="280" height="150" style="display: none; margin: 8px 0; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; background: var(--md-sys-color-surface-container);"></canvas>
@@ -1581,6 +1591,8 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                     if (saveModelBtn) saveModelBtn.removeAttribute('disabled');
                     const continueBtn = this.shadowRoot.querySelector('#continueTraining');
                     if (continueBtn) continueBtn.removeAttribute('disabled');
+                    const measureBtn = this.shadowRoot.querySelector('#measureInference');
+                    if (measureBtn) measureBtn.removeAttribute('disabled');
                     
                     statusDiv.textContent = 'Model loaded successfully!';
                     
@@ -1597,6 +1609,115 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         } catch (error) {
             console.error('Error in loadModel:', error);
             alert('Error loading model: ' + error.message);
+        }
+    }
+
+    async measureInferenceTime() {
+        if (!this.model) {
+            this.updateTrainingStatus('No model loaded to measure.');
+            return;
+        }
+
+        this.updateTrainingStatus('Measuring inference time...');
+        
+        try {
+            const tf = await import('@tensorflow/tfjs');
+            
+            // Request environment data to get bounds and polygons
+            eventBus.emit('visibilnet:requestEnvironment', async (data) => {
+                if (!data || !data.polygons) {
+                    this.updateTrainingStatus('Error: No environment data!');
+                    return;
+                }
+                
+                const { polygons, bounds } = data;
+                
+                // Import service for checking if point is inside polygon
+                const module = await import('../services/VisibilNetService.js');
+                const service = module.visibilnetService;
+                
+                // Generate 2000 random valid points
+                const validPoints = [];
+                const targetCount = 2000;
+                let attempts = 0;
+                const maxAttempts = targetCount * 10;
+                
+                while (validPoints.length < targetCount && attempts < maxAttempts) {
+                    attempts++;
+                    const x = bounds.minX + Math.random() * (bounds.maxX - bounds.minX);
+                    const y = bounds.minY + Math.random() * (bounds.maxY - bounds.minY);
+                    const point = { x, y };
+                    
+                    // Check if point is inside any polygon (obstacle)
+                    let isInside = false;
+                    for (const poly of polygons) {
+                        if (service.isPointInPolygon(point, poly)) {
+                            isInside = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!isInside) {
+                        validPoints.push(point);
+                    }
+                }
+                
+                if (validPoints.length < targetCount) {
+                    this.updateTrainingStatus(`Warning: Only found ${validPoints.length} valid points.`);
+                }
+                
+                // Prepare batch input
+                const { xMin, xMax, yMin, yMax } = this.normalizationParams;
+                
+                const batchInputs = validPoints.map(p => {
+                    // Normalize
+                    let xNorm = 2 * (p.x - xMin) / (xMax - xMin || 1) - 1;
+                    let yNorm = 2 * (p.y - yMin) / (yMax - yMin || 1) - 1;
+                    
+                    // Clamp
+                    xNorm = Math.max(-1, Math.min(1, xNorm));
+                    yNorm = Math.max(-1, Math.min(1, yNorm));
+                    
+                    // Fourier encode
+                    return this.fourierEncode(xNorm, yNorm, 6);
+                });
+                
+                // Convert to tensor
+                const inputTensor = tf.tensor2d(batchInputs);
+                
+                // Warmup
+                this.model.predict(tf.tensor2d([batchInputs[0]])).dispose();
+                
+                // Measure NN time
+                const startNN = performance.now();
+                const prediction = this.model.predict(inputTensor);
+                const result = await prediction.data(); // Force execution
+                const endNN = performance.now();
+                
+                const nnTotalTime = endNN - startNN;
+                const nnPerSampleTime = nnTotalTime / validPoints.length;
+
+                // Measure Geometric time (Control)
+                const startGeo = performance.now();
+                for (const point of validPoints) {
+                    service.getRayDistances(point, polygons, bounds, this.numRays);
+                }
+                const endGeo = performance.now();
+                
+                const geoTotalTime = endGeo - startGeo;
+                const geoPerSampleTime = geoTotalTime / validPoints.length;
+                const speedup = geoTotalTime / nnTotalTime;
+                
+                this.updateTrainingStatus(`NN: ${nnTotalTime.toFixed(1)}ms (${nnPerSampleTime.toFixed(3)}ms/pt) | Geo: ${geoTotalTime.toFixed(1)}ms (${geoPerSampleTime.toFixed(3)}ms/pt) | Speedup: ${speedup.toFixed(1)}x`);
+                
+                // Cleanup
+                inputTensor.dispose();
+                prediction.dispose();
+            });
+            
+        } catch (error) {
+            console.error('Inference measurement error:', error);
+            this.updateTrainingStatus(`Measurement failed: ${error.message}`);
         }
     }
 }
