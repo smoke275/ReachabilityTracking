@@ -3,6 +3,7 @@
  * Draggable floating window for Similarity-based MPPI tracking
  */
 import { eventBus } from '../utils/EventBus.js';
+// import { similarityMPPITrackingService } from '../services/SimilarityMPPITrackingService.js';
 
 export class SimilarityMPPITrackingWindow extends HTMLElement {
     constructor() {
@@ -17,6 +18,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
     connectedCallback() {
         this.render();
         this.setupEventListeners();
+        this.loadConfig();
         this.updatePosition();
     }
 
@@ -27,6 +29,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         const startBtn = this.shadowRoot.querySelector('#startTracking');
         const stopBtn = this.shadowRoot.querySelector('#stopTracking');
         const resetBtn = this.shadowRoot.querySelector('#resetNearEvader');
+        const syncBtn = this.shadowRoot.querySelector('#syncEvaderParams');
 
         // Dragging functionality
         header.addEventListener('mousedown', (e) => this.startDragging(e));
@@ -44,6 +47,9 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             // Placeholder for reset functionality
             console.log('Reset Near Evader clicked');
         });
+        
+        // Sync button
+        syncBtn?.addEventListener('click', () => this.syncWithEvader());
 
         // All parameter sliders
         this.attachSlider('vMaxSlider', 'vMaxValue', (v) => parseFloat(v).toFixed(1));
@@ -75,6 +81,60 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         eventBus.on('similarityMPPITracking:error', (data) => {
             this.showError(data.message);
         });
+
+        // Listen for evader updates to keep the service informed
+        eventBus.on('evader:positionUpdate', (data) => {
+            if (this.isTracking) {
+                // similarityMPPITrackingService.updateEvaderState(data);
+            }
+        });
+        
+        // Listen for evader params response
+        eventBus.on('evader:params', (params) => {
+            this.applyEvaderParams(params);
+        });
+    }
+
+    syncWithEvader() {
+        eventBus.emit('evader:requestParams');
+    }
+
+    applyEvaderParams(params) {
+        if (!params) return;
+        
+        // Use raw values (px/frame and rad/frame) directly
+        const vMax = params.speed || 0;
+        const omegaMax = params.angularSpeed || 0;
+        
+        console.log(`Syncing Evader Params: Speed ${params.speed} -> ${vMax} px/frame, Omega ${params.angularSpeed} -> ${omegaMax} rad/frame`);
+        
+        // Update sliders
+        const vMaxSlider = this.shadowRoot.querySelector('#vMaxSlider');
+        const omegaMaxSlider = this.shadowRoot.querySelector('#omegaMaxSlider');
+        
+        if (vMaxSlider) {
+            vMaxSlider.value = vMax;
+            const display = this.shadowRoot.querySelector('#vMaxValue');
+            if (display) display.textContent = vMax.toFixed(1);
+        }
+        
+        if (omegaMaxSlider) {
+            omegaMaxSlider.value = omegaMax;
+            const display = this.shadowRoot.querySelector('#omegaMaxValue');
+            if (display) display.textContent = omegaMax.toFixed(2);
+        }
+        
+        this.updateConfig();
+        this.showError(`Synced: ${vMax.toFixed(1)} px/frame, ${omegaMax.toFixed(2)} rad/frame`);
+        
+        // Clear message after 3 seconds
+        setTimeout(() => {
+            const statusEl = this.shadowRoot.querySelector('#trackingStatus');
+            if (statusEl && statusEl.textContent.includes('Synced')) {
+                statusEl.textContent = 'Ready to start tracking';
+                statusEl.className = 'status-message';
+            }
+        }, 3000);
     }
 
     attachSlider(sliderId, valueId, formatter) {
@@ -94,34 +154,79 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
 
     updateConfig() {
         const config = {
-            vMax: parseFloat(this.shadowRoot.querySelector('#vMaxSlider')?.value || 10),
+            vMax: parseFloat(this.shadowRoot.querySelector('#vMaxSlider')?.value || 1.0),
             vMin: parseFloat(this.shadowRoot.querySelector('#vMinSlider')?.value || 0),
-            omegaMax: parseFloat(this.shadowRoot.querySelector('#omegaMaxSlider')?.value || 1.5),
+            omegaMax: parseFloat(this.shadowRoot.querySelector('#omegaMaxSlider')?.value || 0.15),
             mppiSamples: parseInt(this.shadowRoot.querySelector('#mppiSamplesSlider')?.value || 500),
             mppiHorizon: parseFloat(this.shadowRoot.querySelector('#mppiHorizonSlider')?.value || 2.0),
             mppiLambda: parseFloat(this.shadowRoot.querySelector('#mppiLambdaSlider')?.value || 0.5),
             mppiSigma: parseFloat(this.shadowRoot.querySelector('#mppiSigmaSlider')?.value || 0.1),
         };
 
-        // Placeholder for service configuration
         console.log('Similarity MPPI Config updated:', config);
         // similarityMPPITrackingService.configure(config);
+        this.saveConfig(config);
+    }
+    
+    saveConfig(config) {
+        localStorage.setItem('mppiTrackingConfig', JSON.stringify(config));
+    }
+    
+    loadConfig() {
+        const saved = localStorage.getItem('mppiTrackingConfig');
+        if (saved) {
+            try {
+                const config = JSON.parse(saved);
+                
+                // Helper to set slider and display
+                const setSlider = (id, val, displayId, fixed) => {
+                    const slider = this.shadowRoot.querySelector(`#${id}`);
+                    const display = this.shadowRoot.querySelector(`#${displayId}`);
+                    if (slider && val !== undefined) {
+                        slider.value = val;
+                        if (display) display.textContent = fixed ? parseFloat(val).toFixed(fixed) : val;
+                    }
+                };
+                
+                setSlider('vMaxSlider', config.vMax, 'vMaxValue', 1);
+                setSlider('vMinSlider', config.vMin, 'vMinValue', 1);
+                setSlider('omegaMaxSlider', config.omegaMax, 'omegaMaxValue', 1);
+                setSlider('mppiSamplesSlider', config.mppiSamples, 'mppiSamplesValue', 0);
+                setSlider('mppiHorizonSlider', config.mppiHorizon, 'mppiHorizonValue', 1);
+                setSlider('mppiLambdaSlider', config.mppiLambda, 'mppiLambdaValue', 2);
+                setSlider('mppiSigmaSlider', config.mppiSigma, 'mppiSigmaValue', 2);
+                
+                // Apply to service
+                // similarityMPPITrackingService.configure(config);
+            } catch (e) {
+                console.error('Failed to load MPPI config', e);
+            }
+        }
     }
 
     startTracking() {
         console.log('Start Tracking clicked');
-        this.isTracking = true;
-        this.updateDisplay();
-        // Placeholder for service start
-        // eventBus.emit('similarityMPPITracking:requestStates', (states) => { ... });
+        
+        eventBus.emit('realTimeTracking:requestStates', (states) => {
+            if (!states.pursuerState || !states.evaderState) {
+                this.showError('Please place both Pursuer and Evader first using the Agents window');
+                return;
+            }
+
+            this.updateConfig();
+            // similarityMPPITrackingService.start(states.pursuerState, states.evaderState);
+            this.isTracking = true;
+            this.updateDisplay();
+            eventBus.emit('similarityMPPITracking:started');
+        });
     }
 
     stopTracking() {
         console.log('Stop Tracking clicked');
+        // similarityMPPITrackingService.stop();
         this.isTracking = false;
         this.updateDisplay();
-        // Placeholder for service stop
-        // similarityMPPITrackingService.stop();
+        eventBus.emit('similarityMPPITracking:stopped');
     }
 
     updateDisplay() {
@@ -522,17 +627,21 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                     <div class="section">
                         <div class="section-title">Motion Constraints</div>
                         <div class="slider-row">
-                            <div class="slider-label">Max Speed: <strong><span id="vMaxValue">10.0</span> px/s</strong></div>
-                            <md-slider id="vMaxSlider" min="0" max="50" step="0.5" value="10" labeled></md-slider>
+                            <div class="slider-label">Max Speed: <strong><span id="vMaxValue">1.0</span> px/frame</strong></div>
+                            <md-slider id="vMaxSlider" min="0" max="10" step="0.1" value="1.0" labeled></md-slider>
                         </div>
                         <div class="slider-row">
-                            <div class="slider-label">Min Speed: <strong><span id="vMinValue">0.0</span> px/s</strong></div>
-                            <md-slider id="vMinSlider" min="0" max="5" step="0.5" value="0" labeled></md-slider>
+                            <div class="slider-label">Min Speed: <strong><span id="vMinValue">0.0</span> px/frame</strong></div>
+                            <md-slider id="vMinSlider" min="0" max="5" step="0.1" value="0" labeled></md-slider>
                         </div>
                         <div class="slider-row">
-                            <div class="slider-label">Max Angular Speed: <strong><span id="omegaMaxValue">1.5</span> rad/s</strong></div>
-                            <md-slider id="omegaMaxSlider" min="0" max="3.0" step="0.1" value="1.5" labeled></md-slider>
+                            <div class="slider-label">Max Angular Speed: <strong><span id="omegaMaxValue">0.15</span> rad/frame</strong></div>
+                            <md-slider id="omegaMaxSlider" min="0" max="0.5" step="0.01" value="0.15" labeled></md-slider>
                         </div>
+                        <md-outlined-button id="syncEvaderParams" class="tool-button">
+                            <md-icon slot="icon">sync</md-icon>
+                            Sync with Evader
+                        </md-outlined-button>
                     </div>
 
                     <md-divider></md-divider>

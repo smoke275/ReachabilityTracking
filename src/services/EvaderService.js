@@ -118,6 +118,15 @@ export class EvaderService {
         // Animation
         this.animationFrameId = null;
         this.lastUpdateTime = 0;
+        
+        // Listen for parameter requests
+        eventBus.on('evader:requestParams', () => {
+            eventBus.emit('evader:params', {
+                speed: this.speed,
+                angularSpeed: this.angularSpeed,
+                mode: this.mode
+            });
+        });
     }
 
     /**
