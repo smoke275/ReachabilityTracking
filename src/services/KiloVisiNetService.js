@@ -4,6 +4,8 @@
  * Divides environment into small cells, each with its own local neural network.
  */
 
+import { visibilnetService } from './VisibilNetService.js';
+
 export class KiloVisiNetService {
     constructor() {
         this.segmentEpsilon = 1e-9;
@@ -79,7 +81,7 @@ export class KiloVisiNetService {
     }
 
     /**
-     * Compute visibility polygon using fixed number of rays (same as VisibilNet)
+     * Compute visibility polygon using fixed number of rays (delegates to VisibilNetService)
      * @param {Object} point - Observer point {x, y}
      * @param {Array} polygons - Array of polygon obstacles
      * @param {Object} bounds - Bounding box {minX, maxX, minY, maxY}
@@ -87,89 +89,11 @@ export class KiloVisiNetService {
      * @returns {Array} Visibility polygon vertices
      */
     computeRayBasedVisibility(point, polygons, bounds, numRays = 36) {
-        if (!point) return [];
-        
-        const segments = [];
-        for (const poly of polygons) {
-            const v = poly.vertices;
-            for (let i = 0; i < v.length; i++) {
-                const a = v[i];
-                const b = v[(i + 1) % v.length];
-                segments.push({ a, b });
-            }
-        }
-        
-        if (bounds) {
-            const bb = [
-                { x: bounds.minX, y: bounds.minY },
-                { x: bounds.maxX, y: bounds.minY },
-                { x: bounds.maxX, y: bounds.maxY },
-                { x: bounds.minX, y: bounds.maxY },
-            ];
-            for (let i = 0; i < 4; i++) {
-                segments.push({ a: bb[i], b: bb[(i+1)%4] });
-            }
-        }
-
-        const intersections = [];
-        for (let i = 0; i < numRays; i++) {
-            const ang = (i / numRays) * 2 * Math.PI;
-            const dx = Math.cos(ang);
-            const dy = Math.sin(ang);
-            
-            let minT = Infinity;
-            let ix = point.x;
-            let iy = point.y;
-            
-            for (const seg of segments) {
-                const res = this.raySegmentIntersect(
-                    point.x, point.y, dx, dy, 
-                    seg.a.x, seg.a.y, seg.b.x, seg.b.y
-                );
-                if (res && res.t >= 0 && res.u >= 0 && res.u <= 1 && res.t < minT) {
-                    minT = res.t;
-                    ix = res.x;
-                    iy = res.y;
-                }
-            }
-            
-            if (minT < Infinity) {
-                intersections.push({ x: ix, y: iy, angle: ang });
-            }
-        }
-        
-        return intersections.map(p => ({ x: p.x, y: p.y }));
+        return visibilnetService.computeRayBasedVisibility(point, polygons, bounds, numRays);
     }
 
     /**
-     * Ray-segment intersection test
-     */
-    raySegmentIntersect(px, py, rdx, rdy, x1, y1, x2, y2) {
-        const rx = rdx, ry = rdy;
-        const sx = x2 - x1, sy = y2 - y1;
-        const qpx = x1 - px, qpy = y1 - py;
-        
-        const cross = (ax, ay, bx, by) => ax * by - ay * bx;
-        const den = cross(rx, ry, sx, sy);
-        
-        if (Math.abs(den) < this.segmentEpsilon) return null;
-        
-        const t = cross(qpx, qpy, sx, sy) / den;
-        const u = cross(qpx, qpy, rx, ry) / den;
-        
-        if (t >= 0 && u >= 0 && u <= 1) {
-            return {
-                t: t,
-                u: u,
-                x: px + t * rx,
-                y: py + t * ry
-            };
-        }
-        return null;
-    }
-
-    /**
-     * Get ray distances for neural network input
+     * Get ray distances for neural network input (delegates to VisibilNetService)
      * @param {Object} point - Observer point
      * @param {Array} polygons - Polygon obstacles
      * @param {Object} bounds - Bounding box
@@ -177,50 +101,7 @@ export class KiloVisiNetService {
      * @returns {Array} Array of distances (one per ray)
      */
     getRayDistances(point, polygons, bounds, numRays = 36) {
-        if (!point) return Array(numRays).fill(0);
-        
-        const segments = [];
-        for (const poly of polygons) {
-            const v = poly.vertices;
-            for (let i = 0; i < v.length; i++) {
-                const a = v[i];
-                const b = v[(i + 1) % v.length];
-                segments.push({ a, b });
-            }
-        }
-        
-        if (bounds) {
-            const bb = [
-                { x: bounds.minX, y: bounds.minY },
-                { x: bounds.maxX, y: bounds.minY },
-                { x: bounds.maxX, y: bounds.maxY },
-                { x: bounds.minX, y: bounds.maxY },
-            ];
-            for (let i = 0; i < 4; i++) {
-                segments.push({ a: bb[i], b: bb[(i+1)%4] });
-            }
-        }
-
-        const distances = [];
-        for (let i = 0; i < numRays; i++) {
-            const ang = (i / numRays) * 2 * Math.PI;
-            const dx = Math.cos(ang);
-            const dy = Math.sin(ang);
-            
-            let minT = Infinity;
-            for (const seg of segments) {
-                const res = this.raySegmentIntersect(
-                    point.x, point.y, dx, dy, 
-                    seg.a.x, seg.a.y, seg.b.x, seg.b.y
-                );
-                if (res && res.t >= 0 && res.u >= 0 && res.u <= 1 && res.t < minT) {
-                    minT = res.t;
-                }
-            }
-            distances.push(minT < Infinity ? minT : 0);
-        }
-        
-        return distances;
+        return visibilnetService.getRayDistances(point, polygons, bounds, numRays);
     }
 
     /**

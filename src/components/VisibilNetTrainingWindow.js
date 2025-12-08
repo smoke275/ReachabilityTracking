@@ -3,6 +3,7 @@
  * Floating window for VisibilNet training data generation with ray-based visibility
  */
 import { eventBus } from '../utils/EventBus.js';
+import { visibilnetService } from '../services/VisibilNetService.js';
 
 export class VisibilNetTrainingWindow extends HTMLElement {
     constructor() {
@@ -40,6 +41,31 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const rayValue = this.shadowRoot.querySelector('#rayValue');
         if (raySlider) raySlider.value = this.numRays;
         if (rayValue) rayValue.textContent = this.numRays;
+
+        // Initialize backend chips
+        this.updateBackendChips();
+    }
+
+    updateBackendChips() {
+        const wasmChip = this.shadowRoot.querySelector('#backendWasm');
+        const jsChip = this.shadowRoot.querySelector('#backendJs');
+        const currentBackend = visibilnetService.getBackend();
+        
+        if (wasmChip && jsChip) {
+            wasmChip.selected = currentBackend === 'wasm';
+            jsChip.selected = currentBackend === 'js';
+            
+            // Disable WASM chip if not available
+            if (!visibilnetService.isWasmAvailable()) {
+                wasmChip.disabled = true;
+                // Force JS if WASM not available
+                if (currentBackend === 'wasm') {
+                    visibilnetService.setBackend('js');
+                    jsChip.selected = true;
+                    wasmChip.selected = false;
+                }
+            }
+        }
     }
 
     setupEventListeners() {
@@ -58,6 +84,19 @@ export class VisibilNetTrainingWindow extends HTMLElement {
         const displaySamplesBtn = this.shadowRoot.querySelector('#displaySamples');
         const applyFilterBtn = this.shadowRoot.querySelector('#applyFilter');
         const resetFilterBtn = this.shadowRoot.querySelector('#resetFilter');
+        
+        const backendWasm = this.shadowRoot.querySelector('#backendWasm');
+        const backendJs = this.shadowRoot.querySelector('#backendJs');
+
+        backendWasm?.addEventListener('click', () => {
+            visibilnetService.setBackend('wasm');
+            this.updateBackendChips();
+        });
+
+        backendJs?.addEventListener('click', () => {
+            visibilnetService.setBackend('js');
+            this.updateBackendChips();
+        });
         
         header.addEventListener('mousedown', (e) => this.startDragging(e));
         document.addEventListener('mousemove', (e) => this.drag(e));
@@ -1391,6 +1430,14 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                         Place/Move Observer
                     </md-filled-button>
                     
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 8px;">
+                        <span style="font-size: 0.9rem; font-weight: 500;">Compute Backend:</span>
+                        <div style="display: flex; gap: 8px;">
+                            <md-filter-chip id="backendWasm" label="WASM" selected></md-filter-chip>
+                            <md-filter-chip id="backendJs" label="JS"></md-filter-chip>
+                        </div>
+                    </div>
+                    
                     <div class="slider-group">
                         <div class="slider-label">
                             <span>Number of Rays</span>
@@ -1698,17 +1745,27 @@ export class VisibilNetTrainingWindow extends HTMLElement {
                 const nnPerSampleTime = nnTotalTime / validPoints.length;
 
                 // Measure Geometric time (Control)
+                const currentBackend = service.getBackend ? service.getBackend() : (service.isWasmAvailable() ? 'wasm' : 'js');
+                const geoLabel = currentBackend === 'wasm' ? 'WASM' : 'JS-Geo';
+                
                 const startGeo = performance.now();
-                for (const point of validPoints) {
-                    service.getRayDistances(point, polygons, bounds, this.numRays);
+                
+                // Use batch processing if available (much faster for WASM)
+                if (service.getBatchRayDistances) {
+                    service.getBatchRayDistances(validPoints, polygons, bounds, this.numRays);
+                } else {
+                    for (const point of validPoints) {
+                        service.getRayDistances(point, polygons, bounds, this.numRays);
+                    }
                 }
+                
                 const endGeo = performance.now();
                 
                 const geoTotalTime = endGeo - startGeo;
                 const geoPerSampleTime = geoTotalTime / validPoints.length;
                 const speedup = geoTotalTime / nnTotalTime;
                 
-                this.updateTrainingStatus(`NN: ${nnTotalTime.toFixed(1)}ms (${nnPerSampleTime.toFixed(3)}ms/pt) | Geo: ${geoTotalTime.toFixed(1)}ms (${geoPerSampleTime.toFixed(3)}ms/pt) | Speedup: ${speedup.toFixed(1)}x`);
+                this.updateTrainingStatus(`NN: ${nnTotalTime.toFixed(1)}ms (${nnPerSampleTime.toFixed(3)}ms/pt) | ${geoLabel}: ${geoTotalTime.toFixed(1)}ms (${geoPerSampleTime.toFixed(3)}ms/pt) | Speedup: ${speedup.toFixed(1)}x`);
                 
                 // Cleanup
                 inputTensor.dispose();

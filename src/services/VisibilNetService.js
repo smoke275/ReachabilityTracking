@@ -4,9 +4,64 @@
  * Uses fixed number of evenly-spaced rays to compute visibility polygon.
  */
 
+import { VisibilNetConfig } from '../config/VisibilNetConfig.js';
+
+let wasmModule = null;
+let wasmService = null;
+
+// Attempt to load WASM
+(async () => {
+    try {
+        // Try to load the WASM module
+        // Note: The path depends on your build setup. Adjust if necessary.
+        wasmModule = await import('../../pkg/reachability_wasm.js');
+        await wasmModule.default(); // Initialize
+        if (wasmModule.VisibilNetWasmService) {
+            wasmService = new wasmModule.VisibilNetWasmService();
+            console.log('VisibilNet WASM Service loaded successfully');
+        }
+    } catch (e) {
+        console.warn('VisibilNet WASM not available, falling back to JS', e);
+    }
+})();
+
 export class VisibilNetService {
     constructor() {
         this.segmentEpsilon = 1e-9;
+        this.preferredBackend = VisibilNetConfig.computeBackend; // 'wasm' or 'js'
+    }
+
+    /**
+     * Check if WASM backend is available
+     * @returns {boolean}
+     */
+    isWasmAvailable() {
+        return !!wasmService;
+    }
+
+    /**
+     * Set the preferred backend
+     * @param {string} backend - 'wasm' or 'js'
+     */
+    setBackend(backend) {
+        if (backend === 'wasm' && !this.isWasmAvailable()) {
+            console.warn('WASM backend requested but not available. Keeping current backend.');
+            return;
+        }
+        this.preferredBackend = backend;
+        VisibilNetConfig.computeBackend = backend; // Update config object too
+        console.log(`VisibilNet backend set to: ${backend}`);
+    }
+
+    /**
+     * Get the current active backend
+     * @returns {string} 'wasm' or 'js'
+     */
+    getBackend() {
+        if (this.preferredBackend === 'wasm' && this.isWasmAvailable()) {
+            return 'wasm';
+        }
+        return 'js';
     }
 
     /**
@@ -19,6 +74,15 @@ export class VisibilNetService {
      */
     computeRayBasedVisibility(point, polygons, bounds, numRays = 36) {
         if (!point) return [];
+
+        // Use WASM if preferred and available
+        if (this.preferredBackend === 'wasm' && wasmService) {
+            try {
+                return wasmService.compute_ray_based_visibility(point, polygons, bounds, numRays);
+            } catch (e) {
+                console.warn('WASM computeRayBasedVisibility failed, falling back to JS:', e);
+            }
+        }
         
         // Build list of segments from polygon edges
         const segments = [];
@@ -116,6 +180,16 @@ export class VisibilNetService {
      */
     getRayDistances(point, polygons, bounds, numRays = 36) {
         if (!point) return Array(numRays).fill(0);
+
+        // Use WASM if preferred and available
+        if (this.preferredBackend === 'wasm' && wasmService) {
+            try {
+                const result = wasmService.get_ray_distances(point, polygons, bounds, numRays);
+                return Array.from(result);
+            } catch (e) {
+                console.warn('WASM getRayDistances failed, falling back to JS:', e);
+            }
+        }
         
         const segments = [];
         for (const poly of polygons) {
@@ -159,6 +233,160 @@ export class VisibilNetService {
         }
         
         return distances;
+   }
+
+    /**
+     * Get ray distances for a batch of points (optimized for WASM)
+     * @param {Array} points - Array of observer points {x, y}
+     * @param {Array} polygons - Polygon obstacles
+     * @param {Object} bounds - Bounding box
+     * @param {number} numRays - Number of rays
+     * @returns {Array} Array of distance arrays
+     */
+    /**
+     * Update the environment (polygons and bounds) in the WASM backend.
+     * @param {Array} polygons 
+     * @param {Object} bounds 
+     */
+    updateEnvironment(polygons, bounds) {
+        if (wasmService && wasmService.update_environment) {
+            try {
+                wasmService.update_environment(polygons, bounds);
+            } catch (e) {
+                console.warn('WASM updateEnvironment failed:', e);
+            }
+        }
+    }
+
+    /**
+     * Compute visibility for a batch of points.
+     * Optimized to use WASM batch processing with flat arrays and environment caching.
+     * @param {Array} points - Array of observer points {x, y}
+     * @param {Array} polygons - Polygon obstacles
+     * @param {Object} bounds - Bounding box
+     * @param {number} numRays - Number of rays
+     * @returns {Array} Array of distance arrays (Float64Array)
+     */
+    getBatchRayDistances(points, polygons, bounds, numRays = 36) {
+        if (!points || points.length === 0) return [];
+
+        // Use WASM if preferred and available
+        if (this.preferredBackend === 'wasm' && wasmService && wasmService.get_batch_ray_distances_optimized) {
+            try {
+                // Check if environment needs update
+                if (this.lastPolygons !== polygons || this.lastBounds !== bounds) {
+                    console.log('Updating WASM environment...');
+                    const t0 = performance.now();
+                    this.updateEnvironment(polygons, bounds);
+                    const t1 = performance.now();
+                    console.log(`Environment update took ${t1 - t0}ms`);
+                    this.lastPolygons = polygons;
+                    this.lastBounds = bounds;
+                }
+
+                // Flatten points to Float64Array [x1, y1, x2, y2, ...]
+                const flatPoints = new Float64Array(points.length * 2);
+                for (let i = 0; i < points.length; i++) {
+                    flatPoints[i * 2] = points[i].x;
+                    flatPoints[i * 2 + 1] = points[i].y;
+                }
+
+                const tStart = performance.now();
+                const flatDistances = wasmService.get_batch_ray_distances_optimized(flatPoints, numRays);
+                const tEnd = performance.now();
+                // console.log(`WASM batch exec: ${tEnd - tStart}ms for ${points.length} points`);
+                
+                // Convert flat distances back to array of arrays
+                const result = [];
+                for (let i = 0; i < points.length; i++) {
+                    const start = i * numRays;
+                    const end = start + numRays;
+                    result.push(flatDistances.subarray(start, end));
+                }
+                return result;
+
+            } catch (e) {
+                console.warn('WASM getBatchRayDistances failed, falling back to JS loop:', e);
+            }
+        }
+        
+        // Fallback to JS loop (Optimized Batch)
+        
+        // 1. Prepare Segments (once)
+        const segments = [];
+        for (const poly of polygons) {
+            const v = poly.vertices;
+            const len = v.length;
+            for (let i = 0; i < len; i++) {
+                segments.push({ 
+                    x1: v[i].x, y1: v[i].y, 
+                    x2: v[(i + 1) % len].x, y2: v[(i + 1) % len].y 
+                });
+            }
+        }
+        if (bounds) {
+             segments.push({ x1: bounds.minX, y1: bounds.minY, x2: bounds.maxX, y2: bounds.minY });
+             segments.push({ x1: bounds.maxX, y1: bounds.minY, x2: bounds.maxX, y2: bounds.maxY });
+             segments.push({ x1: bounds.maxX, y1: bounds.maxY, x2: bounds.minX, y2: bounds.maxY });
+             segments.push({ x1: bounds.minX, y1: bounds.maxY, x2: bounds.minX, y2: bounds.minY });
+        }
+
+        // 2. Precompute Ray Directions (once)
+        const rayDirs = [];
+        for (let i = 0; i < numRays; i++) {
+            const angle = (i / numRays) * 2 * Math.PI;
+            rayDirs.push({ dx: Math.cos(angle), dy: Math.sin(angle) });
+        }
+
+        const result = [];
+        const numSegments = segments.length;
+
+        // 3. Process Points
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            const px = p.x;
+            const py = p.y;
+            const pointDistances = new Float64Array(numRays);
+
+            for (let r = 0; r < numRays; r++) {
+                const { dx, dy } = rayDirs[r];
+                let minT = Infinity;
+
+                for (let s = 0; s < numSegments; s++) {
+                    const seg = segments[s];
+                    const x1 = seg.x1;
+                    const y1 = seg.y1;
+                    const x2 = seg.x2;
+                    const y2 = seg.y2;
+
+                    // Inline intersection logic
+                    const sx = x2 - x1;
+                    const sy = y2 - y1;
+
+                    const rx_sy = dx * sy;
+                    const ry_sx = dy * sx;
+                    const den = rx_sy - ry_sx;
+
+                    if (Math.abs(den) < 1e-9) continue;
+
+                    const qpx = x1 - px;
+                    const qpy = y1 - py;
+
+                    const t = (qpx * sy - qpy * sx) / den;
+                    
+                    // Optimization: check t first
+                    if (t >= 0 && t < minT) {
+                        const u = (qpx * dy - qpy * dx) / den;
+                        if (u >= 0 && u <= 1) {
+                            minT = t;
+                        }
+                    }
+                }
+                pointDistances[r] = (minT < Infinity) ? minT : 0;
+            }
+            result.push(pointDistances);
+        }
+        return result;
     }
 
     /**

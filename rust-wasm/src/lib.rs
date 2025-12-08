@@ -10,12 +10,14 @@ mod geometry;
 mod rrt_star;
 mod sensor_model;
 mod active_tracking;
+mod visibilnet;
 mod utils;
 
 // Re-export main API
 pub use rrt_star::RRTStarService;
 pub use sensor_model::SensorModelService;
 pub use active_tracking::ActiveTrackingService;
+pub use visibilnet::VisibilNetWasmService;
 
 /// Initialize the WASM module
 /// This sets up panic hooks for better error messages in the browser console
