@@ -191,13 +191,13 @@ export class AgentsWindow extends HTMLElement {
         
         if (this.sensorsSynced) {
             // Synced state - active appearance
-            syncBtn.style.background = '#9C27B0';
-            syncBtn.style.color = '#FFFFFF';
-            syncBtn.style.boxShadow = '0 0 10px rgba(156, 39, 176, 0.6)';
+            syncBtn.style.background = 'var(--md-sys-color-primary-container, #EADDFF)';
+            syncBtn.style.color = 'var(--md-sys-color-on-primary-container, #21005D)';
+            syncBtn.style.borderColor = 'var(--md-sys-color-primary, #6750A4)';
             if (syncIcon) syncIcon.textContent = 'sync';
             if (syncStatus) {
                 syncStatus.textContent = 'SYNCED';
-                syncStatus.style.color = '#9C27B0';
+                syncStatus.style.color = 'var(--md-sys-color-primary, #6750A4)';
             }
             
             // Sync current pursuer values to evader
@@ -206,13 +206,13 @@ export class AgentsWindow extends HTMLElement {
             this.updateStatus('Sensor parameters synchronized', false);
         } else {
             // Unsynced state - default appearance
-            syncBtn.style.background = '';
-            syncBtn.style.color = '';
-            syncBtn.style.boxShadow = '';
+            syncBtn.style.background = 'var(--md-sys-color-surface-container-high, #ECE6F0)';
+            syncBtn.style.color = 'var(--md-sys-color-on-surface, #1C1B1F)';
+            syncBtn.style.borderColor = 'var(--md-sys-color-outline, #79747E)';
             if (syncIcon) syncIcon.textContent = 'sync_disabled';
             if (syncStatus) {
                 syncStatus.textContent = 'INDEPENDENT';
-                syncStatus.style.color = '#78909C';
+                syncStatus.style.color = 'var(--md-sys-color-on-surface-variant, #49454F)';
             }
             
             this.updateStatus('Sensor parameters independent', false);
@@ -311,30 +311,22 @@ export class AgentsWindow extends HTMLElement {
         if (placePursuerBtn) {
             if (this.placementMode === 'pursuer') {
                 // Bright orange to indicate placement mode is active
-                placePursuerBtn.style.background = '#FF9800';
-                placePursuerBtn.style.color = '#000000';
-                placePursuerBtn.style.fontWeight = '600';
-                placePursuerBtn.style.boxShadow = '0 0 8px rgba(255, 152, 0, 0.6)';
+                placePursuerBtn.style.setProperty('--md-filled-tonal-button-container-color', '#FF9800');
+                placePursuerBtn.style.setProperty('--md-filled-tonal-button-label-text-color', '#000000');
             } else {
-                placePursuerBtn.style.background = '';
-                placePursuerBtn.style.color = '';
-                placePursuerBtn.style.fontWeight = '';
-                placePursuerBtn.style.boxShadow = '';
+                placePursuerBtn.style.removeProperty('--md-filled-tonal-button-container-color');
+                placePursuerBtn.style.removeProperty('--md-filled-tonal-button-label-text-color');
             }
         }
         
         if (placeEvaderBtn) {
             if (this.placementMode === 'evader') {
                 // Bright orange to indicate placement mode is active
-                placeEvaderBtn.style.background = '#FF9800';
-                placeEvaderBtn.style.color = '#000000';
-                placeEvaderBtn.style.fontWeight = '600';
-                placeEvaderBtn.style.boxShadow = '0 0 8px rgba(255, 152, 0, 0.6)';
+                placeEvaderBtn.style.setProperty('--md-filled-tonal-button-container-color', '#FF9800');
+                placeEvaderBtn.style.setProperty('--md-filled-tonal-button-label-text-color', '#000000');
             } else {
-                placeEvaderBtn.style.background = '';
-                placeEvaderBtn.style.color = '';
-                placeEvaderBtn.style.fontWeight = '';
-                placeEvaderBtn.style.boxShadow = '';
+                placeEvaderBtn.style.removeProperty('--md-filled-tonal-button-container-color');
+                placeEvaderBtn.style.removeProperty('--md-filled-tonal-button-label-text-color');
             }
         }
     }
@@ -346,30 +338,22 @@ export class AgentsWindow extends HTMLElement {
         if (selectPursuerBtn) {
             if (this.selectedAgent === 'pursuer') {
                 // Bright blue to indicate pursuer is selected and keyboard-controllable
-                selectPursuerBtn.style.background = '#2196F3';
-                selectPursuerBtn.style.color = '#FFFFFF';
-                selectPursuerBtn.style.fontWeight = '600';
-                selectPursuerBtn.style.boxShadow = '0 0 8px rgba(33, 150, 243, 0.6)';
+                selectPursuerBtn.style.setProperty('--md-filled-tonal-button-container-color', '#2196F3');
+                selectPursuerBtn.style.setProperty('--md-filled-tonal-button-label-text-color', '#FFFFFF');
             } else {
-                selectPursuerBtn.style.background = '';
-                selectPursuerBtn.style.color = '';
-                selectPursuerBtn.style.fontWeight = '';
-                selectPursuerBtn.style.boxShadow = '';
+                selectPursuerBtn.style.removeProperty('--md-filled-tonal-button-container-color');
+                selectPursuerBtn.style.removeProperty('--md-filled-tonal-button-label-text-color');
             }
         }
         
         if (selectEvaderBtn) {
             if (this.selectedAgent === 'evader') {
                 // Bright pink/red to indicate evader is selected and keyboard-controllable
-                selectEvaderBtn.style.background = '#E91E63';
-                selectEvaderBtn.style.color = '#FFFFFF';
-                selectEvaderBtn.style.fontWeight = '600';
-                selectEvaderBtn.style.boxShadow = '0 0 8px rgba(233, 30, 99, 0.6)';
+                selectEvaderBtn.style.setProperty('--md-filled-tonal-button-container-color', '#E91E63');
+                selectEvaderBtn.style.setProperty('--md-filled-tonal-button-label-text-color', '#FFFFFF');
             } else {
-                selectEvaderBtn.style.background = '';
-                selectEvaderBtn.style.color = '';
-                selectEvaderBtn.style.fontWeight = '';
-                selectEvaderBtn.style.boxShadow = '';
+                selectEvaderBtn.style.removeProperty('--md-filled-tonal-button-container-color');
+                selectEvaderBtn.style.removeProperty('--md-filled-tonal-button-label-text-color');
             }
         }
     }
@@ -514,26 +498,23 @@ export class AgentsWindow extends HTMLElement {
                 
                 .window-container {
                     position: fixed;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: #FFFFFF;
-                    border-radius: 16px;
-                    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                    background: var(--floating-surface, #FFF4E6);
+                    color: var(--floating-on-surface, #3E2723);
+                    border-radius: 12px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                     min-width: 380px;
                     max-width: 450px;
                     overflow: hidden;
-                    border: 2px solid rgba(255, 255, 255, 0.2);
                 }
                 
                 .window-header {
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
-                    padding: 1.25rem;
-                    background: rgba(255, 255, 255, 0.15);
-                    backdrop-filter: blur(10px);
+                    padding: 1rem;
+                    background: var(--md-sys-color-tertiary-container, #FFD8E4);
                     cursor: grab;
                     user-select: none;
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
                 }
                 
                 .window-header:active {
@@ -543,16 +524,10 @@ export class AgentsWindow extends HTMLElement {
                 .window-title {
                     display: flex;
                     align-items: center;
-                    gap: 0.6rem;
-                    font-size: 1.1rem;
-                    font-weight: 700;
-                    color: #FFFFFF;
-                    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                }
-                
-                .window-title md-icon {
-                    font-size: 28px;
-                    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+                    gap: 0.5rem;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    color: var(--md-sys-color-on-tertiary-container, #31111D);
                 }
                 
                 .window-controls {
@@ -560,13 +535,8 @@ export class AgentsWindow extends HTMLElement {
                     gap: 0.25rem;
                 }
                 
-                .window-controls md-icon-button {
-                    --md-icon-button-icon-color: #FFFFFF;
-                }
-                
                 .window-content {
                     padding: 1.5rem;
-                    background: #f8f9fa;
                     max-height: 500px;
                     overflow-y: auto;
                     overscroll-behavior: contain;
@@ -588,68 +558,45 @@ export class AgentsWindow extends HTMLElement {
                 
                 .agent-section {
                     margin-bottom: 1.25rem;
-                    padding: 1.25rem;
-                    background: #FFFFFF;
-                    border-radius: 12px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                    padding: 1rem;
+                    background: var(--md-sys-color-surface-variant, #E7E0EC);
+                    border-radius: 8px;
                     border-left: 4px solid transparent;
-                    transition: all 0.3s ease;
-                }
-                
-                .agent-section:hover {
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-                    transform: translateY(-2px);
                 }
                 
                 .agent-section.pursuer {
                     border-left-color: #2196F3;
-                    background: linear-gradient(135deg, #ffffff 0%, #e3f2fd 100%);
                 }
                 
                 .agent-section.evader {
                     border-left-color: #E91E63;
-                    background: linear-gradient(135deg, #ffffff 0%, #fce4ec 100%);
                 }
                 
                 .sensor-section {
                     margin-bottom: 1.25rem;
-                    padding: 1.25rem;
-                    background: #FFFFFF;
-                    border-radius: 12px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                    padding: 1rem;
+                    background: var(--md-sys-color-surface-variant, #E7E0EC);
+                    border-radius: 8px;
                     border-left: 4px solid transparent;
-                    transition: all 0.3s ease;
-                }
-                
-                .sensor-section:hover {
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-                    transform: translateY(-2px);
                 }
                 
                 .sensor-section.pursuer {
                     border-left-color: #2196F3;
-                    background: linear-gradient(135deg, #ffffff 0%, #e1f5fe 100%);
                 }
                 
                 .sensor-section.evader {
                     border-left-color: #E91E63;
-                    background: linear-gradient(135deg, #ffffff 0%, #fce4ec 100%);
-                }
-                
-                .agent-section:last-of-type {
-                    margin-bottom: 1rem;
                 }
                 
                 .section-divider {
                     margin: 1.5rem 0;
-                    padding: 0.75rem;
-                    background: linear-gradient(135deg, #9c27b0 0%, #673ab7 100%);
+                    padding: 0.5rem;
+                    background: var(--md-sys-color-secondary-container, #E8DEF8);
+                    color: var(--md-sys-color-on-secondary-container, #1D192B);
                     border-radius: 8px;
                     text-align: center;
-                    color: #FFFFFF;
-                    font-weight: 700;
-                    font-size: 0.95rem;
-                    box-shadow: 0 2px 8px rgba(156, 39, 176, 0.3);
+                    font-weight: 600;
+                    font-size: 0.9rem;
                     display: flex;
                     align-items: center;
                     justify-content: center;
@@ -657,19 +604,18 @@ export class AgentsWindow extends HTMLElement {
                 }
                 
                 .section-divider md-icon {
-                    font-size: 22px;
+                    font-size: 20px;
                 }
                 
                 .sync-control {
                     margin: 1rem 0;
-                    padding: 1rem;
-                    background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
-                    border-radius: 10px;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                    padding: 0.75rem;
+                    background: var(--md-sys-color-surface, #FFF);
+                    border: 1px solid var(--md-sys-color-outline, #79747E);
+                    border-radius: 8px;
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
-                    border: 2px solid rgba(156, 39, 176, 0.2);
                 }
                 
                 .sync-info {
@@ -680,140 +626,119 @@ export class AgentsWindow extends HTMLElement {
                 
                 .sync-info md-icon {
                     font-size: 24px;
-                    color: #9C27B0;
+                    color: var(--md-sys-color-primary, #6750A4);
                 }
                 
                 .sync-text {
                     display: flex;
                     flex-direction: column;
-                    gap: 0.2rem;
+                    gap: 0.1rem;
                 }
                 
                 .sync-text .sync-title {
-                    font-size: 0.9rem;
-                    font-weight: 700;
-                    color: #37474f;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    color: var(--md-sys-color-on-surface, #1C1B1F);
                 }
                 
                 .sync-text .sync-description {
                     font-size: 0.75rem;
-                    color: #78909C;
-                    line-height: 1.3;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
                 }
                 
                 .sync-button-wrapper {
                     display: flex;
                     flex-direction: column;
                     align-items: center;
-                    gap: 0.3rem;
+                    gap: 0.2rem;
                 }
                 
                 #syncSensorsBtn {
-                    padding: 0.6rem 1.2rem;
-                    background: #E0E0E0;
-                    border: 2px solid #9C27B0;
-                    border-radius: 8px;
-                    color: #9C27B0;
-                    font-weight: 700;
-                    font-size: 0.85rem;
+                    padding: 0.4rem 0.8rem;
+                    background: var(--md-sys-color-surface-container-high, #ECE6F0);
+                    border: 1px solid var(--md-sys-color-outline, #79747E);
+                    border-radius: 6px;
+                    color: var(--md-sys-color-on-surface, #1C1B1F);
+                    font-weight: 600;
+                    font-size: 0.8rem;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     gap: 0.4rem;
-                    transition: all 0.3s ease;
-                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                    transition: all 0.2s ease;
                 }
                 
                 #syncSensorsBtn:hover {
-                    transform: translateY(-2px);
-                    box-shadow: 0 4px 8px rgba(156, 39, 176, 0.3);
-                }
-                
-                #syncSensorsBtn md-icon {
-                    font-size: 20px;
+                    background: var(--md-sys-color-surface-container-highest, #E6E0E9);
                 }
                 
                 #syncStatus {
-                    font-size: 0.7rem;
+                    font-size: 0.65rem;
                     font-weight: 700;
-                    color: #78909C;
-                    font-family: 'Courier New', monospace;
-                    letter-spacing: 0.5px;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
+                    font-family: 'Roboto Mono', monospace;
                 }
                 
                 .agent-header {
                     display: flex;
                     align-items: center;
                     gap: 0.6rem;
-                    font-size: 1rem;
-                    font-weight: 700;
-                    margin-bottom: 0.85rem;
-                    color: #2c3e50;
-                }
-                
-                .agent-header md-icon {
-                    font-size: 24px;
-                    font-weight: bold;
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    margin-bottom: 0.75rem;
+                    color: var(--md-sys-color-on-surface, #1C1B1F);
                 }
                 
                 .agent-info {
-                    font-size: 0.85rem;
-                    color: #546e7a;
-                    margin-bottom: 0.85rem;
-                    font-family: 'Courier New', monospace;
+                    font-size: 0.8rem;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
+                    margin-bottom: 0.75rem;
+                    font-family: 'Roboto Mono', monospace;
                     display: none;
-                    padding: 0.5rem;
+                    padding: 0.4rem;
                     background: rgba(0,0,0,0.04);
-                    border-radius: 6px;
-                    font-weight: 600;
+                    border-radius: 4px;
                 }
                 
                 .button-group {
                     display: flex;
-                    gap: 0.6rem;
+                    gap: 0.5rem;
                     flex-wrap: wrap;
                 }
                 
                 md-filled-tonal-button {
                     flex: 1;
-                    min-width: 115px;
-                    font-size: 0.85rem;
-                    font-weight: 600;
-                    --md-filled-tonal-button-container-height: 42px;
+                    min-width: 100px;
                 }
                 
                 .info-box {
-                    font-size: 0.9rem;
-                    color: #FFFFFF;
-                    line-height: 1.6;
-                    padding: 1rem 1.25rem;
-                    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-                    border-radius: 10px;
+                    font-size: 0.875rem;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
+                    line-height: 1.5;
+                    padding: 1rem;
+                    background: var(--md-sys-color-surface-variant, #E7E0EC);
+                    border-radius: 8px;
                     margin-bottom: 1.25rem;
-                    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
-                    font-weight: 500;
                 }
                 
                 .info-box md-icon {
                     vertical-align: middle;
                     margin-right: 0.5rem;
-                    font-size: 22px;
                 }
                 
                 .status-message {
-                    font-size: 0.9rem;
-                    color: #2c3e50;
-                    padding: 0.85rem;
-                    background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%);
+                    font-size: 0.875rem;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
+                    padding: 0.75rem;
+                    background: var(--md-sys-color-surface-container, #F3EDF7);
                     border-radius: 8px;
                     text-align: center;
                     min-height: 2.5rem;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-weight: 600;
-                    box-shadow: 0 2px 6px rgba(255, 235, 59, 0.3);
-                    border: 1px solid rgba(251, 192, 45, 0.3);
+                    font-weight: 500;
+                    border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
                 }
                 
                 /* Sensor Controls */
@@ -827,14 +752,10 @@ export class AgentsWindow extends HTMLElement {
                     display: flex;
                     align-items: center;
                     gap: 0.5rem;
-                    font-size: 1rem;
-                    font-weight: 700;
+                    font-size: 0.95rem;
+                    font-weight: 600;
                     margin-bottom: 0.5rem;
-                    color: #2c3e50;
-                }
-                
-                .sensor-title md-icon {
-                    font-size: 24px;
+                    color: var(--md-sys-color-on-surface, #1C1B1F);
                 }
                 
                 .slider-row {
@@ -845,128 +766,53 @@ export class AgentsWindow extends HTMLElement {
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    font-size: 0.85rem;
-                    font-weight: 600;
-                    color: #37474f;
-                    margin-bottom: 0.4rem;
-                }
-                
-                .slider-row label .param-name {
-                    font-weight: 700;
-                    color: #455a64;
+                    font-size: 0.8rem;
+                    font-weight: 500;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
+                    margin-bottom: 0.2rem;
                 }
                 
                 .slider-row label .param-value {
-                    color: #2196F3;
-                    font-weight: 700;
-                    font-family: 'Courier New', monospace;
-                    font-size: 0.9rem;
-                    padding: 0.2rem 0.5rem;
-                    background: rgba(33, 150, 243, 0.1);
+                    color: var(--md-sys-color-primary, #6750A4);
+                    font-weight: 600;
+                    font-family: 'Roboto Mono', monospace;
+                    font-size: 0.85rem;
+                    padding: 0.1rem 0.4rem;
+                    background: var(--md-sys-color-surface-container-high, #ECE6F0);
                     border-radius: 4px;
                 }
                 
-                .slider-row input[type="range"] {
+                md-slider {
                     width: 100%;
-                    height: 6px;
-                    border-radius: 3px;
-                    background: linear-gradient(to right, #bbdefb 0%, #2196F3 100%);
-                    outline: none;
-                    -webkit-appearance: none;
-                }
-                
-                .slider-row input[type="range"]::-webkit-slider-thumb {
-                    -webkit-appearance: none;
-                    appearance: none;
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 50%;
-                    background: #2196F3;
-                    cursor: pointer;
-                    box-shadow: 0 2px 6px rgba(33, 150, 243, 0.4);
-                    transition: all 0.2s ease;
-                }
-                
-                .slider-row input[type="range"]::-webkit-slider-thumb:hover {
-                    transform: scale(1.2);
-                    box-shadow: 0 3px 10px rgba(33, 150, 243, 0.6);
-                }
-                
-                .slider-row input[type="range"]::-moz-range-thumb {
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 50%;
-                    background: #2196F3;
-                    cursor: pointer;
-                    border: none;
-                    box-shadow: 0 2px 6px rgba(33, 150, 243, 0.4);
-                    transition: all 0.2s ease;
-                }
-                
-                .slider-row input[type="range"]::-moz-range-thumb:hover {
-                    transform: scale(1.2);
-                    box-shadow: 0 3px 10px rgba(33, 150, 243, 0.6);
-                }
-                
-                .evader .slider-row label .param-value {
-                    color: #E91E63;
-                    background: rgba(233, 30, 99, 0.1);
-                }
-                
-                .evader .slider-row input[type="range"] {
-                    background: linear-gradient(to right, #f8bbd0 0%, #E91E63 100%);
-                }
-                
-                .evader .slider-row input[type="range"]::-webkit-slider-thumb {
-                    background: #E91E63;
-                    box-shadow: 0 2px 6px rgba(233, 30, 99, 0.4);
-                }
-                
-                .evader .slider-row input[type="range"]::-webkit-slider-thumb:hover {
-                    box-shadow: 0 3px 10px rgba(233, 30, 99, 0.6);
-                }
-                
-                .evader .slider-row input[type="range"]::-moz-range-thumb {
-                    background: #E91E63;
-                    box-shadow: 0 2px 6px rgba(233, 30, 99, 0.4);
-                }
-                
-                .evader .slider-row input[type="range"]::-moz-range-thumb:hover {
-                    box-shadow: 0 3px 10px rgba(233, 30, 99, 0.6);
                 }
                 
                 /* Detection Status */
                 .detection-status {
                     margin-top: 1.5rem;
                     padding: 1rem;
-                    background: linear-gradient(135deg, #263238 0%, #37474f 100%);
-                    border-radius: 10px;
-                    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
-                    border: 2px solid rgba(255, 255, 255, 0.1);
+                    background: var(--md-sys-color-surface-container-low, #F7F2FA);
+                    border-radius: 8px;
+                    border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
                 }
                 
                 .detection-status-title {
                     display: flex;
                     align-items: center;
                     gap: 0.5rem;
-                    font-size: 0.95rem;
-                    font-weight: 700;
-                    color: #FFFFFF;
-                    margin-bottom: 1rem;
-                    padding-bottom: 0.75rem;
-                    border-bottom: 2px solid rgba(255, 255, 255, 0.2);
-                }
-                
-                .detection-status-title md-icon {
-                    font-size: 22px;
+                    font-size: 0.9rem;
+                    font-weight: 600;
+                    color: var(--md-sys-color-on-surface, #1C1B1F);
+                    margin-bottom: 0.75rem;
+                    padding-bottom: 0.5rem;
+                    border-bottom: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
                 }
                 
                 .detection-row {
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
-                    padding: 0.65rem 0;
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                    padding: 0.5rem 0;
+                    border-bottom: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
                 }
                 
                 .detection-row:last-child {
@@ -978,12 +824,8 @@ export class AgentsWindow extends HTMLElement {
                     align-items: center;
                     gap: 0.5rem;
                     font-size: 0.85rem;
-                    font-weight: 600;
-                    color: rgba(255, 255, 255, 0.9);
-                }
-                
-                .detection-label md-icon {
-                    font-size: 20px;
+                    font-weight: 500;
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
                 }
                 
                 .detection-value {
@@ -991,15 +833,12 @@ export class AgentsWindow extends HTMLElement {
                     align-items: center;
                     gap: 0.4rem;
                     font-size: 0.8rem;
-                    font-weight: 700;
-                    font-family: 'Courier New', monospace;
-                    padding: 0.3rem 0.6rem;
-                    background: rgba(0, 0, 0, 0.3);
-                    border-radius: 6px;
-                }
-                
-                .detection-value md-icon {
-                    font-size: 18px;
+                    font-weight: 600;
+                    font-family: 'Roboto Mono', monospace;
+                    padding: 0.2rem 0.5rem;
+                    background: var(--md-sys-color-surface, #FFF);
+                    border-radius: 4px;
+                    border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
                 }
                 
                 .distance-info {
@@ -1007,21 +846,16 @@ export class AgentsWindow extends HTMLElement {
                     align-items: center;
                     gap: 0.5rem;
                     font-size: 0.85rem;
-                    color: rgba(255, 255, 255, 0.8);
+                    color: var(--md-sys-color-on-surface-variant, #49454F);
                     margin-top: 0.75rem;
                     padding-top: 0.75rem;
-                    border-top: 1px solid rgba(255, 255, 255, 0.1);
-                }
-                
-                .distance-info md-icon {
-                    font-size: 18px;
-                    color: #64B5F6;
+                    border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0);
                 }
                 
                 .distance-info .distance-value {
-                    font-weight: 700;
-                    font-family: 'Courier New', monospace;
-                    color: #64B5F6;
+                    font-weight: 600;
+                    font-family: 'Roboto Mono', monospace;
+                    color: var(--md-sys-color-primary, #6750A4);
                 }
             </style>
             
@@ -1128,21 +962,21 @@ export class AgentsWindow extends HTMLElement {
                                     <span class="param-name">Max Range (R_max)</span>
                                     <span class="param-value" id="pursuerRmax">150 px</span>
                                 </label>
-                                <input type="range" id="pursuerRmaxSlider" min="50" max="300" value="150" step="10">
+                                <md-slider id="pursuerRmaxSlider" min="50" max="300" value="150" step="10"></md-slider>
                             </div>
                             <div class="slider-row">
                                 <label>
                                     <span class="param-name">Blind Spot (R_min)</span>
                                     <span class="param-value" id="pursuerRmin">20 px</span>
                                 </label>
-                                <input type="range" id="pursuerRminSlider" min="0" max="100" value="20" step="5">
+                                <md-slider id="pursuerRminSlider" min="0" max="100" value="20" step="5"></md-slider>
                             </div>
                             <div class="slider-row">
                                 <label>
                                     <span class="param-name">Field of View (FOV)</span>
                                     <span class="param-value" id="pursuerFov">360°</span>
                                 </label>
-                                <input type="range" id="pursuerFovSlider" min="30" max="360" value="360" step="15">
+                                <md-slider id="pursuerFovSlider" min="30" max="360" value="360" step="15"></md-slider>
                             </div>
                         </div>
                     </div>
@@ -1159,21 +993,21 @@ export class AgentsWindow extends HTMLElement {
                                     <span class="param-name">Max Range (R_max)</span>
                                     <span class="param-value" id="evaderRmax">120 px</span>
                                 </label>
-                                <input type="range" id="evaderRmaxSlider" min="50" max="300" value="120" step="10">
+                                <md-slider id="evaderRmaxSlider" min="50" max="300" value="120" step="10"></md-slider>
                             </div>
                             <div class="slider-row">
                                 <label>
                                     <span class="param-name">Blind Spot (R_min)</span>
                                     <span class="param-value" id="evaderRmin">15 px</span>
                                 </label>
-                                <input type="range" id="evaderRminSlider" min="0" max="100" value="15" step="5">
+                                <md-slider id="evaderRminSlider" min="0" max="100" value="15" step="5"></md-slider>
                             </div>
                             <div class="slider-row">
                                 <label>
                                     <span class="param-name">Field of View (FOV)</span>
                                     <span class="param-value" id="evaderFov">270°</span>
                                 </label>
-                                <input type="range" id="evaderFovSlider" min="30" max="360" value="270" step="15">
+                                <md-slider id="evaderFovSlider" min="30" max="360" value="270" step="15"></md-slider>
                             </div>
                         </div>
                     </div>

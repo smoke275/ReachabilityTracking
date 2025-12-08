@@ -22,6 +22,15 @@ export class SimilarityCalculatorWindow extends HTMLElement {
         this.enableGeometric = false; // Default to false
         this.enableMonteCarlo = true; // Default to true
         
+        // AI Model state
+        this.model = null;
+        this.normalizationParams = null;
+        this.aiObserver1Polygon = null;
+        this.aiObserver2Polygon = null;
+        this.aiSimilarity = null;
+        this.mcSimilarity = null;
+        this.enableAiRealtime = false; // Default to false
+
         // Load numRays from localStorage or default to 36
         const savedNumRays = localStorage.getItem('similarity:numRays');
         this.numRays = savedNumRays ? parseInt(savedNumRays) : 36;
@@ -44,6 +53,9 @@ export class SimilarityCalculatorWindow extends HTMLElement {
 
         const mcToggle = this.shadowRoot.querySelector('#mcToggle');
         if (mcToggle) mcToggle.checked = this.enableMonteCarlo;
+
+        const aiToggle = this.shadowRoot.querySelector('#aiToggle');
+        if (aiToggle) aiToggle.checked = this.enableAiRealtime;
         
         console.log('SimilarityCalculatorWindow: initialized, position:', this.position);
     }
@@ -60,12 +72,18 @@ export class SimilarityCalculatorWindow extends HTMLElement {
         const geoToggle = this.shadowRoot.querySelector('#geometricToggle');
         const mcToggle = this.shadowRoot.querySelector('#mcToggle');
         
+        const loadModelBtn = this.shadowRoot.querySelector('#loadModelBtn');
+        const showAiEstimatesBtn = this.shadowRoot.querySelector('#showAiEstimatesBtn');
+
         header.addEventListener('mousedown', (e) => this.startDragging(e));
         document.addEventListener('mousemove', (e) => this.drag(e));
         document.addEventListener('mouseup', () => this.stopDragging());
 
         closeBtn?.addEventListener('click', () => this.close());
         minimizeBtn?.addEventListener('click', () => this.minimize());
+
+        loadModelBtn?.addEventListener('click', () => this.loadModel());
+        showAiEstimatesBtn?.addEventListener('click', () => this.toggleAiEstimates());
 
         placeObserver1Btn?.addEventListener('click', () => {
             this.activeObserver = 'observer1';
@@ -154,6 +172,11 @@ export class SimilarityCalculatorWindow extends HTMLElement {
             if (this.observer1?.polygon && this.observer2?.polygon) {
                 // Auto-calculate similarity whenever position changes
                 this.calculateSimilarity();
+                
+                // Auto-calculate AI similarity if enabled
+                if (this.enableAiRealtime && this.model) {
+                    this.calculateAISimilarity(true); // true = silent mode
+                }
             }
         });
     }
@@ -199,83 +222,229 @@ export class SimilarityCalculatorWindow extends HTMLElement {
         eventBus.on('similarity:calculationComplete', handleResult);
     }
 
-    updateObserverDisplay() {
-        const obs1Display = this.shadowRoot.querySelector('#observer1Display');
-        const obs2Display = this.shadowRoot.querySelector('#observer2Display');
-        
-        if (obs1Display) {
-            if (this.observer1) {
-                obs1Display.textContent = `Position: (${this.observer1.x.toFixed(1)}, ${this.observer1.y.toFixed(1)})`;
-                obs1Display.style.color = '#2E7D32'; // Green
-            } else {
-                obs1Display.textContent = 'Not placed';
-                obs1Display.style.color = '#90A4AE';
-            }
+    // Fourier feature encoding for better spatial representation
+    fourierEncode(x, y, numFrequencies = 6) {
+        const features = [];
+        for (let i = 0; i < numFrequencies; i++) {
+            const freq = Math.pow(2, i) * Math.PI;
+            features.push(Math.sin(freq * x));
+            features.push(Math.cos(freq * x));
+            features.push(Math.sin(freq * y));
+            features.push(Math.cos(freq * y));
         }
-        
-        if (obs2Display) {
-            if (this.observer2) {
-                obs2Display.textContent = `Position: (${this.observer2.x.toFixed(1)}, ${this.observer2.y.toFixed(1)})`;
-                obs2Display.style.color = '#EF6C00'; // Orange
-            } else {
-                obs2Display.textContent = 'Not placed';
-                obs2Display.style.color = '#90A4AE';
-            }
-        }
+        return features;
     }
 
-    updateSimilarityDisplay(result) {
-        const display = this.shadowRoot.querySelector('#similarityDisplay');
-        const geoDetails = this.shadowRoot.querySelector('#geoDetails');
-        
-        const mcDisplay = this.shadowRoot.querySelector('#mcSimilarityDisplay');
-        const mcDetails = this.shadowRoot.querySelector('#mcDetails');
-
-        if (!display) return;
-
-        if (result) {
-            // Geometric
-            if (result.similarity !== null) {
-                const percentage = (result.similarity * 100).toFixed(2);
-                display.textContent = `${percentage}%`;
-                display.style.color = '#4CAF50';
+    async loadModel() {
+        try {
+            // Create file input that accepts multiple files
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,.bin';
+            input.multiple = true;
+            
+            input.onchange = async (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length < 2) {
+                    alert('Please select at least 2 files: model.json and weights file (.bin)');
+                    return;
+                }
                 
-                if (geoDetails) {
-                    geoDetails.textContent = `Time: ${result.calculationTime.toFixed(3)}ms | Exact Area Calculation`;
-                }
-            } else {
-                display.textContent = '--';
-                display.style.color = 'rgba(255,255,255,0.3)';
-                if (geoDetails) geoDetails.textContent = 'Calculation disabled';
-            }
-            
-            // Monte Carlo
-            if (mcDisplay) {
-                if (result.mcSimilarity !== undefined) {
-                    const mcPercentage = (result.mcSimilarity * 100).toFixed(2);
-                    mcDisplay.textContent = `${mcPercentage}%`;
-                    if (mcDetails) {
-                        mcDetails.textContent = `Time: ${result.mcTime.toFixed(3)}ms | Samples: ${result.mcSamples}`;
+                try {
+                    // Find each file by name pattern (more flexible matching)
+                    const modelFile = files.find(f => f.name.endsWith('.json') && !f.name.includes('params'));
+                    const weightsFile = files.find(f => f.name.endsWith('.bin'));
+                    const paramsFile = files.find(f => f.name.includes('params') || (f.name.endsWith('.json') && f.name.includes('model')));
+                    
+                    console.log('Files found:', {
+                        modelFile: modelFile?.name,
+                        weightsFile: weightsFile?.name,
+                        paramsFile: paramsFile?.name,
+                        allFiles: files.map(f => f.name)
+                    });
+                    
+                    if (!modelFile || !weightsFile) {
+                        alert(`Missing required files!\nFound: ${files.map(f => f.name).join(', ')}\n\nNeed:\n- model.json\n- weights.bin (or .bin file)`);
+                        return;
                     }
-                } else {
-                    mcDisplay.textContent = '--';
-                    if (mcDetails) mcDetails.textContent = 'Calculation disabled';
+                    
+                    const statusDiv = this.shadowRoot.querySelector('#modelStatus');
+                    statusDiv.textContent = 'Loading model...';
+                    
+                    // Load normalization params if available
+                    if (paramsFile) {
+                        const paramsText = await paramsFile.text();
+                        const params = JSON.parse(paramsText);
+                        this.normalizationParams = params.normalizationParams;
+                        // We use the model's numRays for prediction
+                        this.modelNumRays = params.numRays;
+                    } else {
+                        console.warn('No params file found, normalization may not work correctly');
+                        statusDiv.textContent = 'Warning: No params file found';
+                    }
+                    
+                    // Load model
+                    const tf = await import('@tensorflow/tfjs');
+                    this.model = await tf.loadLayersModel(
+                        tf.io.browserFiles([modelFile, weightsFile])
+                    );
+                    
+                    // Update UI
+                    const showAiBtn = this.shadowRoot.querySelector('#showAiEstimatesBtn');
+                    if (showAiBtn) showAiBtn.removeAttribute('disabled');
+                    
+                    statusDiv.textContent = `Model loaded! Rays: ${this.modelNumRays || 'Unknown'}`;
+                    
+                } catch (error) {
+                    console.error('Error loading model:', error);
+                    const statusDiv = this.shadowRoot.querySelector('#modelStatus');
+                    statusDiv.textContent = 'Error loading model';
+                    alert('Error loading model: ' + error.message);
                 }
-            }
-        } else {
-            display.textContent = '--';
-            display.style.color = 'rgba(255,255,255,0.3)';
-            if (geoDetails) geoDetails.textContent = '';
+            };
             
-            if (mcDisplay) mcDisplay.textContent = '--';
-            if (mcDetails) mcDetails.textContent = '';
+            input.click();
+            
+        } catch (error) {
+            console.error('Error in loadModel:', error);
+            alert('Error loading model: ' + error.message);
         }
     }
 
-    updateStatus(message) {
-        const status = this.shadowRoot.querySelector('#statusText');
-        if (status) {
-            status.textContent = message;
+    async predictVisibility(observer) {
+        if (!this.model || !this.normalizationParams) return null;
+        
+        const tf = await import('@tensorflow/tfjs');
+        
+        const { xMin, xMax, yMin, yMax } = this.normalizationParams;
+        
+        // Normalize
+        let xNorm = 2 * (observer.x - xMin) / (xMax - xMin || 1) - 1;
+        let yNorm = 2 * (observer.y - yMin) / (yMax - yMin || 1) - 1;
+        
+        // Clamp
+        xNorm = Math.max(-1, Math.min(1, xNorm));
+        yNorm = Math.max(-1, Math.min(1, yNorm));
+        
+        // Fourier encode
+        const features = this.fourierEncode(xNorm, yNorm, 6);
+        
+        // Predict
+        const inputTensor = tf.tensor2d([features]);
+        const prediction = this.model.predict(inputTensor);
+        const normalizedDistances = await prediction.data();
+        
+        inputTensor.dispose();
+        prediction.dispose();
+        
+        // Denormalize distances
+        const { dMin, dMax } = this.normalizationParams;
+        const distances = Array.from(normalizedDistances).map(d => 
+            d * (dMax - dMin) + dMin
+        );
+        
+        return this.reconstructPolygon(observer, distances);
+    }
+
+    reconstructPolygon(observer, distances) {
+        const vertices = [];
+        const numRays = distances.length;
+        
+        for (let i = 0; i < numRays; i++) {
+            const angle = i * (2 * Math.PI / numRays);
+            const dist = distances[i];
+            
+            vertices.push({
+                x: observer.x + dist * Math.cos(angle),
+                y: observer.y + dist * Math.sin(angle)
+            });
+        }
+        
+        return vertices;
+    }
+
+    async calculateAISimilarity(silent = false) {
+        if (!this.model) {
+            if (!silent) alert('Please load a model first');
+            return;
+        }
+        
+        if (!this.observer1 || !this.observer2) {
+            if (!silent) this.updateStatus('Place both observers first');
+            return;
+        }
+        
+        const statusDiv = this.shadowRoot.querySelector('#aiDetails');
+        if (!silent) statusDiv.textContent = 'Predicting visibility...';
+        
+        try {
+            // Predict polygons
+            const poly1 = await this.predictVisibility(this.observer1);
+            const poly2 = await this.predictVisibility(this.observer2);
+            
+            if (!poly1 || !poly2) {
+                if (!silent) statusDiv.textContent = 'Prediction failed';
+                return;
+            }
+            
+            this.aiObserver1Polygon = poly1;
+            this.aiObserver2Polygon = poly2;
+            
+            if (!silent) statusDiv.textContent = 'Calculating MC Similarity...';
+            
+            const tempObserver1 = { ...this.observer1, polygon: poly1 };
+            const tempObserver2 = { ...this.observer2, polygon: poly2 };
+            
+            // Calculate locally to avoid event bus race conditions
+            const startTime = performance.now();
+            const similarity = this.calculateLocalMcSimilarity(tempObserver1, tempObserver2);
+            this.aiSimilarity = similarity;
+            const endTime = performance.now();
+            
+            const percentage = (similarity * 100).toFixed(2);
+            const display = this.shadowRoot.querySelector('#aiSimilarityDisplay');
+            if (display) {
+                display.textContent = `${percentage}%`;
+                display.style.color = '#80DEEA';
+            }
+            
+            // Always update status with metrics, even in silent mode
+            statusDiv.textContent = `Time: ${(endTime - startTime).toFixed(3)}ms | Samples: 2000`;
+            
+            this.updateErrorDisplay();
+            
+        } catch (error) {
+            console.error('Error in AI similarity:', error);
+            statusDiv.textContent = 'Error: ' + error.message;
+        }
+    }
+
+    toggleAiEstimates() {
+        this.enableAiRealtime = !this.enableAiRealtime;
+        const btn = this.shadowRoot.querySelector('#showAiEstimatesBtn');
+        const icon = btn.querySelector('md-icon');
+        
+        if (this.enableAiRealtime) {
+            // Enable
+            btn.style.setProperty('--md-sys-color-secondary-container', '#006064');
+            btn.style.setProperty('--md-sys-color-on-secondary-container', '#E0F7FA');
+            icon.textContent = 'stop_circle';
+            // Trigger initial calculation
+            this.calculateAISimilarity();
+        } else {
+            // Disable
+            btn.style.setProperty('--md-sys-color-secondary-container', 'rgba(255,255,255,0.2)');
+            btn.style.setProperty('--md-sys-color-on-secondary-container', 'white');
+            icon.textContent = 'psychology';
+            
+            // Clear display
+            const display = this.shadowRoot.querySelector('#aiSimilarityDisplay');
+            const statusDiv = this.shadowRoot.querySelector('#aiDetails');
+            if (display) {
+                display.textContent = '--';
+                display.style.color = '#80DEEA';
+            }
+            if (statusDiv) statusDiv.textContent = 'AI estimation paused';
         }
     }
 
@@ -347,6 +516,192 @@ export class SimilarityCalculatorWindow extends HTMLElement {
         console.log('Element display style:', window.getComputedStyle(this).display);
         console.log('Element position:', this.position);
         this.updateStatus('Place observers to begin');
+    }
+
+    updateObserverDisplay() {
+        const obs1Display = this.shadowRoot.querySelector('#observer1Display');
+        const obs2Display = this.shadowRoot.querySelector('#observer2Display');
+        
+        if (obs1Display) {
+            if (this.observer1) {
+                obs1Display.textContent = `Position: (${this.observer1.x.toFixed(1)}, ${this.observer1.y.toFixed(1)})`;
+                obs1Display.style.color = '#2E7D32'; // Green
+            } else {
+                obs1Display.textContent = 'Not placed';
+                obs1Display.style.color = '#90A4AE';
+            }
+        }
+        
+        if (obs2Display) {
+            if (this.observer2) {
+                obs2Display.textContent = `Position: (${this.observer2.x.toFixed(1)}, ${this.observer2.y.toFixed(1)})`;
+                obs2Display.style.color = '#EF6C00'; // Orange
+            } else {
+                obs2Display.textContent = 'Not placed';
+                obs2Display.style.color = '#90A4AE';
+            }
+        }
+    }
+
+    updateSimilarityDisplay(result) {
+        const display = this.shadowRoot.querySelector('#similarityDisplay');
+        const geoDetails = this.shadowRoot.querySelector('#geoDetails');
+        
+        const mcDisplay = this.shadowRoot.querySelector('#mcSimilarityDisplay');
+        const mcDetails = this.shadowRoot.querySelector('#mcDetails');
+
+        if (!display) return;
+
+        if (result) {
+            // Geometric
+            if (result.similarity !== null) {
+                const percentage = (result.similarity * 100).toFixed(2);
+                display.textContent = `${percentage}%`;
+                display.style.color = '#4CAF50';
+                
+                if (geoDetails) {
+                    geoDetails.textContent = `Time: ${result.calculationTime.toFixed(3)}ms | Exact Area Calculation`;
+                }
+            } else {
+                display.textContent = '--';
+                display.style.color = 'rgba(255,255,255,0.3)';
+                if (geoDetails) geoDetails.textContent = 'Calculation disabled';
+            }
+            
+            // Monte Carlo
+            if (mcDisplay) {
+                if (result.mcSimilarity !== undefined) {
+                    this.mcSimilarity = result.mcSimilarity;
+                    const mcPercentage = (result.mcSimilarity * 100).toFixed(2);
+                    mcDisplay.textContent = `${mcPercentage}%`;
+                    if (mcDetails) {
+                        mcDetails.textContent = `Time: ${result.mcTime.toFixed(3)}ms | Samples: ${result.mcSamples}`;
+                    }
+                } else {
+                    mcDisplay.textContent = '--';
+                    if (mcDetails) mcDetails.textContent = 'Calculation disabled';
+                }
+            }
+        } else {
+            display.textContent = '--';
+            display.style.color = 'rgba(255,255,255,0.3)';
+            if (geoDetails) geoDetails.textContent = '';
+            
+            if (mcDisplay) mcDisplay.textContent = '--';
+            if (mcDetails) mcDetails.textContent = '';
+            this.mcSimilarity = null;
+        }
+        this.updateErrorDisplay();
+    }
+
+    updateStatus(message) {
+        const status = this.shadowRoot.querySelector('#statusText');
+        if (status) {
+            status.textContent = message;
+        }
+    }
+
+    updateErrorDisplay() {
+        const display = this.shadowRoot.querySelector('#aiErrorDisplay');
+        if (!display) return;
+        
+        if (this.mcSimilarity !== null && this.aiSimilarity !== null) {
+            const diff = Math.abs(this.mcSimilarity - this.aiSimilarity);
+            const diffPct = (diff * 100).toFixed(1);
+            display.textContent = `Err: ${diffPct}%`;
+            display.style.display = 'block';
+            
+            // Color coding based on error magnitude
+            if (diff < 0.05) {
+                display.style.color = '#C8E6C9'; // Light Green (Good)
+            } else if (diff < 0.09) {
+                display.style.color = '#FFE0B2'; // Light Orange (Okay)
+            } else {
+                display.style.color = '#FFAB91'; // Light Red (Bad)
+            }
+        } else {
+            display.style.display = 'none';
+        }
+    }
+
+    isPointInPolygon(point, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+            const xi = polygon[i].x, yi = polygon[i].y;
+            const xj = polygon[j].x, yj = polygon[j].y;
+            
+            const intersect = ((yi > point.y) !== (yj > point.y))
+                && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    calculateLocalMcSimilarity(observer1, observer2) {
+        const poly1 = observer1.polygon; // Array of {x,y}
+        const poly2 = observer2.polygon; // Array of {x,y}
+        const center = { x: observer2.x, y: observer2.y };
+        
+        if (!poly1 || !poly2 || poly2.length < 3) return 0;
+
+        // 1. Calculate total area of poly2 (sum of triangles from center)
+        // Since it's a visibility polygon from 'center', it is star-shaped.
+        // We can just sum areas of triangles (center, p[i], p[i+1])
+        
+        let totalArea = 0;
+        const cdf = [];
+        
+        for (let i = 0; i < poly2.length; i++) {
+            const p1 = poly2[i];
+            const p2 = poly2[(i + 1) % poly2.length];
+            
+            // Area = 0.5 * |x1(y2 - y3) + x2(y3 - y1) + x3(y1 - y2)|
+            // x3,y3 is center
+            const area = 0.5 * Math.abs(
+                p1.x * (p2.y - center.y) + 
+                p2.x * (center.y - p1.y) + 
+                center.x * (p1.y - p2.y)
+            );
+            
+            totalArea += area;
+            cdf.push(totalArea);
+        }
+        
+        if (totalArea === 0) return 0;
+
+        // 2. Sample points
+        let pointsInA = 0;
+        const numSamples = 2000;
+        
+        for (let k = 0; k < numSamples; k++) {
+            // Select triangle based on area weight
+            const r = Math.random() * totalArea;
+            let triIndex = cdf.findIndex(v => v >= r);
+            if (triIndex === -1) triIndex = cdf.length - 1;
+            
+            // Sample point in triangle (center, p1, p2)
+            const p1 = poly2[triIndex];
+            const p2 = poly2[(triIndex + 1) % poly2.length];
+            
+            const r1 = Math.random();
+            const r2 = Math.random();
+            
+            // Uniform sampling in triangle
+            // P = (1 - sqrt(r1)) * A + (sqrt(r1) * (1 - r2)) * B + (sqrt(r1) * r2) * C
+            let sqrtR1 = Math.sqrt(r1);
+            let u = 1 - sqrtR1;
+            let v = sqrtR1 * (1 - r2);
+            let w = sqrtR1 * r2;
+            
+            const px = u * center.x + v * p1.x + w * p2.x;
+            const py = u * center.y + v * p1.y + w * p2.y;
+            
+            if (this.isPointInPolygon({x: px, y: py}, poly1)) {
+                pointsInA++;
+            }
+        }
+        
+        return pointsInA / numSamples;
     }
 
     render() {
@@ -743,6 +1098,28 @@ export class SimilarityCalculatorWindow extends HTMLElement {
                                 </label>
                                 <label for="mcToggle" style="font-size: 0.75rem; color: rgba(255,255,255,0.9); cursor: pointer;">Enable MC Calculation</label>
                             </div>
+                        </div>
+
+                        <!-- AI Estimate Result -->
+                        <div class="similarity-display" style="background: linear-gradient(135deg, #006064 0%, #00838F 100%); color: white;">
+                            <div class="similarity-label" style="color: rgba(255,255,255,0.9);">AI Estimate (VisibilNet)</div>
+                            <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                                <div class="similarity-value" id="aiSimilarityDisplay" style="color: #80DEEA;">--</div>
+                                <div id="aiErrorDisplay" style="font-size: 0.85rem; color: #FFAB91; font-weight: 600; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px; display: none;"></div>
+                            </div>
+                            <div class="similarity-details" id="aiDetails" style="color: rgba(255,255,255,0.7);">Load model to enable</div>
+                            
+                            <div style="margin-top: 12px; display: flex; gap: 8px; justify-content: center;">
+                                <md-outlined-button id="loadModelBtn" style="--md-outlined-button-label-text-color: #E0F7FA; --md-sys-color-outline: rgba(255,255,255,0.3);">
+                                    <md-icon slot="icon">upload_file</md-icon>
+                                    Load Model
+                                </md-outlined-button>
+                                <md-filled-tonal-button id="showAiEstimatesBtn" disabled style="--md-sys-color-secondary-container: rgba(255,255,255,0.2); --md-sys-color-on-secondary-container: white;">
+                                    <md-icon slot="icon">psychology</md-icon>
+                                    Show AI Estimates
+                                </md-filled-tonal-button>
+                            </div>
+                            <div id="modelStatus" style="font-size: 0.7rem; margin-top: 8px; opacity: 0.8;"></div>
                         </div>
 
                         <!-- Geometric Result -->
