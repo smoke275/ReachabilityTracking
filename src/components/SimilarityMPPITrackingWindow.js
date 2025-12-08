@@ -3,7 +3,7 @@
  * Draggable floating window for Similarity-based MPPI tracking
  */
 import { eventBus } from '../utils/EventBus.js';
-// import { similarityMPPITrackingService } from '../services/SimilarityMPPITrackingService.js';
+import { similarityMPPITrackingService } from '../services/SimilarityMPPITrackingService.js';
 
 export class SimilarityMPPITrackingWindow extends HTMLElement {
     constructor() {
@@ -50,6 +50,13 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         
         // Sync button
         syncBtn?.addEventListener('click', () => this.syncWithEvader());
+        
+        // Visualization toggle
+        const showTrajectories = this.shadowRoot.querySelector('#showTrajectories');
+        showTrajectories?.addEventListener('change', (e) => {
+            console.log('Toggle visualization:', e.target.checked);
+            eventBus.emit('similarityMPPITracking:toggleVisualization', e.target.checked);
+        });
 
         // All parameter sliders
         this.attachSlider('vMaxSlider', 'vMaxValue', (v) => parseFloat(v).toFixed(1));
@@ -61,6 +68,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         this.attachSlider('mppiHorizonSlider', 'mppiHorizonValue', (v) => parseFloat(v).toFixed(1));
         this.attachSlider('mppiLambdaSlider', 'mppiLambdaValue', (v) => parseFloat(v).toFixed(2));
         this.attachSlider('mppiSigmaSlider', 'mppiSigmaValue', (v) => parseFloat(v).toFixed(2));
+        this.attachSlider('controlFreqSlider', 'controlFreqValue', (v) => parseInt(v));
 
         // Listen for events
         eventBus.on('similarityMPPITracking:started', () => {
@@ -85,7 +93,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         // Listen for evader updates to keep the service informed
         eventBus.on('evader:positionUpdate', (data) => {
             if (this.isTracking) {
-                // similarityMPPITrackingService.updateEvaderState(data);
+                similarityMPPITrackingService.updateEvaderState(data);
             }
         });
         
@@ -161,10 +169,11 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             mppiHorizon: parseFloat(this.shadowRoot.querySelector('#mppiHorizonSlider')?.value || 2.0),
             mppiLambda: parseFloat(this.shadowRoot.querySelector('#mppiLambdaSlider')?.value || 0.5),
             mppiSigma: parseFloat(this.shadowRoot.querySelector('#mppiSigmaSlider')?.value || 0.1),
+            controlFreq: parseInt(this.shadowRoot.querySelector('#controlFreqSlider')?.value || 30),
         };
 
         console.log('Similarity MPPI Config updated:', config);
-        // similarityMPPITrackingService.configure(config);
+        similarityMPPITrackingService.configure(config);
         this.saveConfig(config);
     }
     
@@ -195,9 +204,10 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 setSlider('mppiHorizonSlider', config.mppiHorizon, 'mppiHorizonValue', 1);
                 setSlider('mppiLambdaSlider', config.mppiLambda, 'mppiLambdaValue', 2);
                 setSlider('mppiSigmaSlider', config.mppiSigma, 'mppiSigmaValue', 2);
+                setSlider('controlFreqSlider', config.controlFreq, 'controlFreqValue', 0);
                 
                 // Apply to service
-                // similarityMPPITrackingService.configure(config);
+                similarityMPPITrackingService.configure(config);
             } catch (e) {
                 console.error('Failed to load MPPI config', e);
             }
@@ -214,19 +224,13 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             }
 
             this.updateConfig();
-            // similarityMPPITrackingService.start(states.pursuerState, states.evaderState);
-            this.isTracking = true;
-            this.updateDisplay();
-            eventBus.emit('similarityMPPITracking:started');
+            similarityMPPITrackingService.start(states.pursuerState, states.evaderState);
         });
     }
 
     stopTracking() {
         console.log('Stop Tracking clicked');
-        // similarityMPPITrackingService.stop();
-        this.isTracking = false;
-        this.updateDisplay();
-        eventBus.emit('similarityMPPITracking:stopped');
+        similarityMPPITrackingService.stop();
     }
 
     updateDisplay() {
@@ -620,6 +624,10 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                             <div class="slider-label">Exploration Noise (σ): <strong><span id="mppiSigmaValue">0.1</span></strong></div>
                             <md-slider id="mppiSigmaSlider" min="0.01" max="1.0" step="0.01" value="0.1" labeled></md-slider>
                         </div>
+                        <div class="slider-row">
+                            <div class="slider-label">Control Frequency: <strong><span id="controlFreqValue">30</span> Hz</strong></div>
+                            <md-slider id="controlFreqSlider" min="1" max="60" step="1" value="30" labeled></md-slider>
+                        </div>
                     </div>
 
                     <md-divider></md-divider>
@@ -642,6 +650,18 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                             <md-icon slot="icon">sync</md-icon>
                             Sync with Evader
                         </md-outlined-button>
+                    </div>
+
+                    <md-divider></md-divider>
+
+                    <div class="section">
+                        <div class="section-title">Visualization</div>
+                        <div class="control-group">
+                            <label class="control-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" id="showTrajectories" style="width: 18px; height: 18px;">
+                                Show Trajectories
+                            </label>
+                        </div>
                     </div>
 
                     <md-divider></md-divider>

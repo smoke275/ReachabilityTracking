@@ -375,6 +375,17 @@ class App {
 
         // Similarity MPPI tracking actions
         eventBus.on('action:similarityMPPITracking', () => this.showSimilarityMPPITrackingWindow());
+        eventBus.on('similarityMPPITracking:update', (data) => {
+            // console.log('MPPI Update:', data.trajectories ? data.trajectories.length : 0);
+            if (this.canvasController && data.trajectories) {
+                this.canvasController.setMPPITrajectories(data.trajectories);
+            }
+        });
+        eventBus.on('similarityMPPITracking:toggleVisualization', (show) => {
+            if (this.canvasController) {
+                this.canvasController.toggleMPPITrajectories(show);
+            }
+        });
 
         // Evader simulation actions
         eventBus.on('action:evaderSimulation', () => this.showEvaderWindow());
@@ -1582,6 +1593,9 @@ class App {
                     this.canvasController.setEvaderState(state);
                     this.canvasController.redraw();
                 }
+                
+                // Emit position update for other components
+                eventBus.emit('evader:positionUpdate', state);
                 
                 // Continue loop
                 this.evaderRenderLoopId = requestAnimationFrame(updateLoop);

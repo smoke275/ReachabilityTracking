@@ -80,6 +80,12 @@ export class PolygonCanvasController {
             strategy: null
         };
 
+        // MPPI visualization state
+        this.mppiData = {
+            trajectories: [],
+            showTrajectories: false
+        };
+
         // Visibility analysis state
         this.visibility = {
             start: null, // {x,y}
@@ -1304,6 +1310,11 @@ export class PolygonCanvasController {
             this.drawSimilarityCalculator();
         }
 
+        // Draw MPPI trajectories
+        if (this.mppiData.showTrajectories && this.mppiData.trajectories.length > 0) {
+            this.drawMPPITrajectories();
+        }
+
         // Draw RRT trees if available
         if (this.rrtTrees.pursuer && this.rrtTrees.showPursuer) {
             this.drawRRTTree(this.rrtTrees.pursuer, '#2196F3', 0.6); // Blue for pursuer
@@ -1879,7 +1890,7 @@ export class PolygonCanvasController {
         }
         if (sim.observer2) {
             this.drawHandle(sim.observer2.x, sim.observer2.y, '#FF9800', 'Observer 2');
-        }
+ }
     }
 
     drawHandle(x, y, color, label) {
@@ -2867,5 +2878,49 @@ export class PolygonCanvasController {
 
 
         ctx.restore();
+    }
+
+    drawMPPITrajectories() {
+        const ctx = this.ctx;
+        const trajectories = this.mppiData.trajectories;
+        
+        if (!trajectories || !Array.isArray(trajectories) || trajectories.length === 0) return;
+
+        // console.log(`Drawing ${trajectories.length} MPPI trajectories`);
+
+        ctx.save();
+        // Scale line width by zoom to keep it constant on screen
+        ctx.lineWidth = 2.0 / this.camera.zoom;
+        
+        // Draw all trajectories
+        trajectories.forEach(traj => {
+            if (!traj || traj.length < 2) return;
+            
+            // Use a more visible blue
+            ctx.strokeStyle = 'rgba(33, 150, 243, 0.6)';
+            
+            ctx.beginPath();
+            ctx.moveTo(traj[0].x, traj[0].y);
+            for (let i = 1; i < traj.length; i++) {
+                ctx.lineTo(traj[i].x, traj[i].y);
+            }
+            ctx.stroke();
+        });
+        
+        ctx.restore();
+    }
+
+    setMPPITrajectories(trajectories) {
+        // console.log('Controller set MPPI trajectories:', trajectories ? trajectories.length : 0);
+        this.mppiData.trajectories = trajectories;
+        if (this.mppiData.showTrajectories) {
+            this.redraw();
+        }
+    }
+
+    toggleMPPITrajectories(show) {
+        console.log('Controller toggle MPPI:', show);
+        this.mppiData.showTrajectories = show;
+        this.redraw();
     }
 }

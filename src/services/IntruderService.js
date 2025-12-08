@@ -104,6 +104,20 @@ export class IntruderService {
         this.movementInterval = null;
         this.movementSpeed = 16; // milliseconds between updates (60fps)
         
+        // Listen for external position updates (e.g. from MPPI or other controllers)
+        eventBus.on('intruder:positionUpdate', (data) => {
+            // Update internal state to match external changes
+            if (data.position) {
+                // Only update if we have a position object
+                if (!this.position) this.position = { x: 0, y: 0 };
+                this.position.x = data.position.x;
+                this.position.y = data.position.y;
+            }
+            if (typeof data.heading === 'number') {
+                this.heading = data.heading;
+            }
+        });
+
         this.setupKeyboardListeners();
     }
 
