@@ -28,6 +28,7 @@ export class ToolboxSection extends HTMLElement {
         const kilovisinetTrainingBtn = this.shadowRoot.querySelector('#kilovisinetTraining');
         const similarityCalculatorBtn = this.shadowRoot.querySelector('#similarityCalculator');
         const siminetTrainingBtn = this.shadowRoot.querySelector('#siminetTraining');
+        const similarityMPPITrackingBtn = this.shadowRoot.querySelector('#similarityMPPITracking');
         
         envAnalysisBtn?.addEventListener('click', () => {
             console.log('Environment Analysis button clicked');
@@ -99,6 +100,12 @@ export class ToolboxSection extends HTMLElement {
             console.log('SimiNet Training button clicked');
             eventBus.emit('action:siminetTraining');
             console.log('Event emitted: action:siminetTraining');
+        });
+
+        similarityMPPITrackingBtn?.addEventListener('click', () => {
+            console.log('Similarity MPPI Tracking button clicked');
+            eventBus.emit('action:similarityMPPITracking');
+            console.log('Event emitted: action:similarityMPPITracking');
         });
     }
 
@@ -186,9 +193,14 @@ export class ToolboxSection extends HTMLElement {
                     Similarity Calculator
                 </md-filled-button>
 
-                <md-filled-button id="siminetTraining" class="tool-button">
+                                <md-filled-button id="siminetTraining" class="tool-button">
                     <md-icon slot="icon">model_training</md-icon>
                     SimiNet Training
+                </md-filled-button>
+
+                <md-filled-button id="similarityMPPITracking" class="tool-button">
+                    <md-icon slot="icon">auto_graph</md-icon>
+                    Similarity MPPI Tracking
                 </md-filled-button>
             </div>
         `;

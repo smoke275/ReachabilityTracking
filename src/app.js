@@ -40,6 +40,7 @@ import './components/SimilarityCalculatorWindow.js';
 import './components/SimiNetTrainingWindow.js';
 import { ActiveTrackingWindow } from './components/ActiveTrackingWindow.js';
 import { RealTimeTrackingWindow } from './components/RealTimeTrackingWindow.js';
+import { SimilarityMPPITrackingWindow } from './components/SimilarityMPPITrackingWindow.js';
 
 // Import Core modules
 import { PolygonCanvasController } from './controllers/PolygonCanvasController.js';
@@ -86,6 +87,7 @@ class App {
         this.rrtWindow = null;
         this.activeTrackingWindow = null;
         this.realTimeTrackingWindow = null;
+        this.similarityMPPITrackingWindow = null;
         this.evaderRenderLoopId = null;
         
         // Evader manual control state
@@ -180,6 +182,12 @@ class App {
         this.realTimeTrackingWindow = document.createElement('real-time-tracking-window');
         document.body.appendChild(this.realTimeTrackingWindow);
         console.log('Real-Time Tracking window created:', this.realTimeTrackingWindow);
+
+        // Initialize Similarity MPPI Tracking window (Web Component)
+        console.log('Creating Similarity MPPI Tracking window...');
+        this.similarityMPPITrackingWindow = document.createElement('similarity-mppi-tracking-window');
+        document.body.appendChild(this.similarityMPPITrackingWindow);
+        console.log('Similarity MPPI Tracking window created:', this.similarityMPPITrackingWindow);
         
         // Setup event handlers
         this.setupEventHandlers();
@@ -364,13 +372,9 @@ class App {
                 });
             }
         });
-        
-        // Real-time tracking request for current evader state
-        eventBus.on('realTimeTracking:requestEvaderState', (callback) => {
-            if (callback && typeof callback === 'function') {
-                callback(this.evaderService.getState());
-            }
-        });
+
+        // Similarity MPPI tracking actions
+        eventBus.on('action:similarityMPPITracking', () => this.showSimilarityMPPITrackingWindow());
 
         // Evader simulation actions
         eventBus.on('action:evaderSimulation', () => this.showEvaderWindow());
@@ -1095,6 +1099,21 @@ class App {
         } else {
             console.error('Real-Time Tracking window not initialized');
             alert('Real-Time Tracking window not initialized. Please refresh the page.');
+        }
+    }
+
+    showSimilarityMPPITrackingWindow() {
+        console.log('showSimilarityMPPITrackingWindow called');
+        if (this.similarityMPPITrackingWindow) {
+            try {
+                this.similarityMPPITrackingWindow.show();
+                console.log('Similarity MPPI Tracking window shown');
+            } catch (error) {
+                console.error('Error showing Similarity MPPI Tracking window:', error);
+            }
+        } else {
+            console.error('Similarity MPPI Tracking window not initialized');
+            alert('Similarity MPPI Tracking window not initialized. Please refresh the page.');
         }
     }
 
