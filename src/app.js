@@ -1193,7 +1193,12 @@ class App {
             x_min: minX - margin,
             x_max: maxX + margin,
             y_min: minY - margin,
-            y_max: maxY + margin
+            y_max: maxY + margin,
+            // Add camelCase aliases for compatibility with SDFService and TensorFlowMPPIService
+            minX: minX - margin,
+            maxX: maxX + margin,
+            minY: minY - margin,
+            maxY: maxY + margin
         };
         
         console.log('Calculated workspace bounds:', bounds);

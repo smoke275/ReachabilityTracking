@@ -3,6 +3,7 @@
  * Draggable floating window for Similarity-based MPPI tracking
  */
 import { eventBus } from '../utils/EventBus.js';
+import { tensorFlowMPPIService } from '../services/TensorFlowMPPIService.js';
 import { similarityMPPITrackingService } from '../services/SimilarityMPPITrackingService.js';
 import { sdfService } from '../services/SDFService.js';
 
@@ -14,6 +15,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         this.dragOffset = { x: 0, y: 0 };
         this.position = { x: window.innerWidth - 450, y: 120 };
         this.isTracking = false;
+        this.activeService = tensorFlowMPPIService; // Default
     }
 
     connectedCallback() {
@@ -117,6 +119,8 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         // Listen for evader updates to keep the service informed
         eventBus.on('evader:positionUpdate', (data) => {
             if (this.isTracking) {
+                // Update both services to be safe, or just the active one
+                tensorFlowMPPIService.updateEvaderState(data);
                 similarityMPPITrackingService.updateEvaderState(data);
             }
         });
@@ -198,9 +202,11 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             safeDistance: parseFloat(this.shadowRoot.querySelector('#safeDistanceSlider')?.value || 20),
         };
 
-        console.log('Similarity MPPI Config updated:', config);
+        tensorFlowMPPIService.configure(config);
         similarityMPPITrackingService.configure(config);
-        this.saveConfig(config);
+        
+        // Save to local storage
+        localStorage.setItem('mppi_config', JSON.stringify(config));
     }
     
     saveConfig(config) {
@@ -235,6 +241,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 setSlider('safeDistanceSlider', config.safeDistance, 'safeDistanceValue', 0);
                 
                 // Apply to service
+                tensorFlowMPPIService.configure(config);
                 similarityMPPITrackingService.configure(config);
             } catch (e) {
                 console.error('Failed to load MPPI config', e);
@@ -252,12 +259,25 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             }
 
             this.updateConfig();
-            similarityMPPITrackingService.start(states.pursuerState, states.evaderState);
+            
+            // Determine backend
+            const backend = this.shadowRoot.querySelector('#backendSelector')?.value || 'tensorflow';
+            console.log(`Starting tracking with backend: ${backend}`);
+            
+            if (backend === 'tensorflow') {
+                this.activeService = tensorFlowMPPIService;
+            } else {
+                this.activeService = similarityMPPITrackingService;
+            }
+            
+            this.activeService.start(states.pursuerState, states.evaderState);
         });
     }
 
     stopTracking() {
         console.log('Stop Tracking clicked');
+        // Stop both to be safe
+        tensorFlowMPPIService.stop();
         similarityMPPITrackingService.stop();
     }
 
@@ -279,7 +299,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
     updateTracking(data) {
         const statusEl = this.shadowRoot.querySelector('#trackingStatus');
         if (statusEl) {
-            statusEl.textContent = `✓ Tracking active`;
+            statusEl.textContent = `✓ Tracking active (TFJS)`;
             statusEl.className = 'status-message active';
         }
     }
@@ -625,7 +645,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 <div class="window-header">
                     <div class="window-title">
                         <md-icon class="title-icon">track_changes</md-icon>
-                        Similarity-based MPPI Tracking
+                        TensorFlow MPPI Tracking
                     </div>
                     <div class="window-controls">
                         <button class="control-btn minimize-btn" title="Minimize"><md-icon>remove</md-icon></button>
@@ -635,13 +655,25 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 <div class="window-content">
                     
                     <div class="section">
+                        <div class="section-title">Backend</div>
+                        <div class="control-group">
+                            <select id="backendSelector">
+                                <option value="tensorflow">TensorFlow (GPU)</option>
+                                <option value="simple">Simple JS (CPU)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <md-divider></md-divider>
+
+                    <div class="section">
                         <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
                             MPPI Parameters
                             <span id="sdfStatus" style="font-size: 11px; padding: 2px 8px; border-radius: 12px; background: #eee; color: #666; font-weight: normal; text-transform: none;">SDF: Init</span>
                         </div>
                         <div class="slider-row">
-                            <div class="slider-label">Samples (K): <strong><span id="mppiSamplesValue">500</span></strong></div>
-                            <md-slider id="mppiSamplesSlider" min="100" max="2000" step="50" value="500" labeled></md-slider>
+                            <div class="slider-label">Samples (K): <strong><span id="mppiSamplesValue">2000</span></strong></div>
+                            <md-slider id="mppiSamplesSlider" min="100" max="10000" step="100" value="2000" labeled></md-slider>
                         </div>
                         <div class="slider-row">
                             <div class="slider-label">Time Horizon (T): <strong><span id="mppiHorizonValue">2.0</span>s</strong></div>
