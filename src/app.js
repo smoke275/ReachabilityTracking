@@ -58,6 +58,7 @@ import { similarityCalculatorService } from './services/SimilarityCalculatorServ
 import { siminetService } from './services/SimiNetService.js';
 import { activeTrackingService } from './services/ActiveTrackingService.js';
 import { realTimeTrackingService } from './services/RealTimeTrackingService.js';
+import { sdfService } from './services/SDFService.js';
 import { eventBus } from './utils/EventBus.js';
 
 /**
@@ -656,6 +657,7 @@ class App {
         realTimeTrackingService.obstacles = polygons;
         rrtStarService.obstacles = polygons;
         rrtStarService.config.bounds = bounds;
+        sdfService.setObstacles(polygons, bounds);
         
         console.log('Updated obstacles for all services, count:', polygons.length);
     }

@@ -4,6 +4,7 @@
  */
 import { eventBus } from '../utils/EventBus.js';
 import { similarityMPPITrackingService } from '../services/SimilarityMPPITrackingService.js';
+import { sdfService } from '../services/SDFService.js';
 
 export class SimilarityMPPITrackingWindow extends HTMLElement {
     constructor() {
@@ -69,12 +70,35 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         this.attachSlider('mppiLambdaSlider', 'mppiLambdaValue', (v) => parseFloat(v).toFixed(2));
         this.attachSlider('mppiSigmaSlider', 'mppiSigmaValue', (v) => parseFloat(v).toFixed(2));
         this.attachSlider('controlFreqSlider', 'controlFreqValue', (v) => parseInt(v));
+        this.attachSlider('collisionWeightSlider', 'collisionWeightValue', (v) => parseInt(v));
+        this.attachSlider('safeDistanceSlider', 'safeDistanceValue', (v) => parseInt(v));
 
         // Listen for events
         eventBus.on('similarityMPPITracking:started', () => {
             this.isTracking = true;
             this.updateDisplay();
         });
+
+        // SDF Status
+        const updateSDFStatus = () => {
+            const badge = this.shadowRoot.querySelector('#sdfStatus');
+            if (badge) {
+                if (sdfService.isReady) {
+                    badge.textContent = 'SDF: Ready';
+                    badge.style.background = '#e8f5e9'; // Light green
+                    badge.style.color = '#2e7d32'; // Dark green
+                    badge.title = `Grid: ${sdfService.cols}x${sdfService.rows}, Res: ${sdfService.resolution}px`;
+                } else {
+                    badge.textContent = 'SDF: Computing...';
+                    badge.style.background = '#fff3e0'; // Light orange
+                    badge.style.color = '#ef6c00'; // Dark orange
+                }
+            }
+        };
+        
+        eventBus.on('sdf:updated', updateSDFStatus);
+        // Initial check
+        setTimeout(updateSDFStatus, 100); // Small delay to ensure render
 
         eventBus.on('similarityMPPITracking:stopped', (stats) => {
             this.isTracking = false;
@@ -170,6 +194,8 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             mppiLambda: parseFloat(this.shadowRoot.querySelector('#mppiLambdaSlider')?.value || 0.5),
             mppiSigma: parseFloat(this.shadowRoot.querySelector('#mppiSigmaSlider')?.value || 0.1),
             controlFreq: parseInt(this.shadowRoot.querySelector('#controlFreqSlider')?.value || 30),
+            collisionWeight: parseFloat(this.shadowRoot.querySelector('#collisionWeightSlider')?.value || 10000),
+            safeDistance: parseFloat(this.shadowRoot.querySelector('#safeDistanceSlider')?.value || 20),
         };
 
         console.log('Similarity MPPI Config updated:', config);
@@ -205,6 +231,8 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 setSlider('mppiLambdaSlider', config.mppiLambda, 'mppiLambdaValue', 2);
                 setSlider('mppiSigmaSlider', config.mppiSigma, 'mppiSigmaValue', 2);
                 setSlider('controlFreqSlider', config.controlFreq, 'controlFreqValue', 0);
+                setSlider('collisionWeightSlider', config.collisionWeight, 'collisionWeightValue', 0);
+                setSlider('safeDistanceSlider', config.safeDistance, 'safeDistanceValue', 0);
                 
                 // Apply to service
                 similarityMPPITrackingService.configure(config);
@@ -607,7 +635,10 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 <div class="window-content">
                     
                     <div class="section">
-                        <div class="section-title">MPPI Parameters</div>
+                        <div class="section-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            MPPI Parameters
+                            <span id="sdfStatus" style="font-size: 11px; padding: 2px 8px; border-radius: 12px; background: #eee; color: #666; font-weight: normal; text-transform: none;">SDF: Init</span>
+                        </div>
                         <div class="slider-row">
                             <div class="slider-label">Samples (K): <strong><span id="mppiSamplesValue">500</span></strong></div>
                             <md-slider id="mppiSamplesSlider" min="100" max="2000" step="50" value="500" labeled></md-slider>
@@ -627,6 +658,14 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                         <div class="slider-row">
                             <div class="slider-label">Control Frequency: <strong><span id="controlFreqValue">30</span> Hz</strong></div>
                             <md-slider id="controlFreqSlider" min="1" max="60" step="1" value="30" labeled></md-slider>
+                        </div>
+                        <div class="slider-row">
+                            <div class="slider-label">Collision Weight: <strong><span id="collisionWeightValue">10000</span></strong></div>
+                            <md-slider id="collisionWeightSlider" min="0" max="20000" step="100" value="10000" labeled></md-slider>
+                        </div>
+                        <div class="slider-row">
+                            <div class="slider-label">Safe Distance: <strong><span id="safeDistanceValue">20</span> px</strong></div>
+                            <md-slider id="safeDistanceSlider" min="5" max="100" step="1" value="20" labeled></md-slider>
                         </div>
                     </div>
 

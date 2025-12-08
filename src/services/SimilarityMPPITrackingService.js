@@ -4,6 +4,7 @@
  */
 
 import { eventBus } from '../utils/EventBus.js';
+import { sdfService } from './SDFService.js';
 
 export class SimilarityMPPITrackingService {
     constructor() {
@@ -23,7 +24,9 @@ export class SimilarityMPPITrackingService {
             mppiLambda: 1.0,
             mppiSigma: 0.5,
             dt: 0.05,
-            controlFreq: 30 // Hz
+            controlFreq: 30, // Hz
+            collisionWeight: 10000.0, // Weight for collision cost
+            safeDistance: 20.0 // Distance at which collision cost kicks in
         };
         
         this.lastControlTime = 0;
@@ -157,7 +160,22 @@ export class SimilarityMPPITrackingService {
                 while (headingError > Math.PI) headingError -= 2 * Math.PI;
                 while (headingError < -Math.PI) headingError += 2 * Math.PI;
 
-                const baseV = Math.min(vMax, dist); 
+                // SDF-aware Base Policy: Slow down near obstacles
+                const distToObs = sdfService.getDistance(simState.x, simState.y);
+                
+                // If near obstacle (e.g. < 40px), reduce speed limit
+                // But keep a minimum speed (e.g. 10% of vMax) to allow escaping if stuck
+                let obstacleSpeedLimit = vMax;
+                if (distToObs < 40.0) {
+                    const ratio = Math.max(0, distToObs / 40.0);
+                    obstacleSpeedLimit = vMax * (0.1 + 0.9 * ratio);
+                }
+                
+                // Also slow down if we need to turn sharply (Kinematic constraint)
+                const turnSpeedLimit = vMax * Math.max(0.1, Math.cos(headingError));
+
+                const effectiveVMax = Math.min(vMax, obstacleSpeedLimit, turnSpeedLimit);
+                const baseV = Math.min(effectiveVMax, dist); 
                 const baseOmega = Math.max(-omegaMax, Math.min(omegaMax, 2.0 * headingError));
 
                 // Add noise
@@ -188,6 +206,19 @@ export class SimilarityMPPITrackingService {
                 const stepCost = Math.sqrt(dX*dX + dY*dY);
                 
                 trajectoryCost += stepCost;
+
+                // Cost: Collision avoidance using SDF
+                // distToObs is already computed above for the base policy
+                if (distToObs < this.config.safeDistance) {
+                    // Exponential barrier or linear penalty
+                    // Using linear penalty for simplicity: cost increases as distance decreases
+                    // If inside (dist < 0), cost continues to increase linearly
+                    const collisionCost = this.config.collisionWeight * (this.config.safeDistance - distToObs);
+                    trajectoryCost += collisionCost;
+                } else {
+                    // Small bonus for being far from obstacles (optional, helps center in corridors)
+                    // trajectoryCost -= Math.min(100, distToObs); 
+                }
             }
             
             trajectories.push(controls);
@@ -210,10 +241,27 @@ export class SimilarityMPPITrackingService {
         let avgV = 0;
         let avgOmega = 0;
 
-        for (let k = 0; k < mppiSamples; k++) {
-            const w = weights[k] / weightSum;
-            avgV += w * trajectories[k][0].v;
-            avgOmega += w * trajectories[k][0].omega;
+        if (weightSum < 1e-10 || isNaN(weightSum)) {
+            // Fallback: use the best trajectory (min cost)
+            const bestIdx = costs.indexOf(minCost);
+            if (bestIdx !== -1) {
+                avgV = trajectories[bestIdx][0].v;
+                avgOmega = trajectories[bestIdx][0].omega;
+            } else {
+                avgV = 0;
+                avgOmega = 0;
+            }
+        } else {
+            for (let k = 0; k < mppiSamples; k++) {
+                const w = weights[k] / weightSum;
+                avgV += w * trajectories[k][0].v;
+                avgOmega += w * trajectories[k][0].omega;
+            }
+        }
+        
+        if (isNaN(avgV) || isNaN(avgOmega)) {
+            console.warn('MPPI produced NaN control', { avgV, avgOmega, weightSum, minCost });
+            return { control: { v: 0, omega: 0 }, trajectories: trajectoryPoints };
         }
 
         return { 
@@ -226,6 +274,8 @@ export class SimilarityMPPITrackingService {
         const state = this.pursuerState;
         const { v, omega } = control;
         
+        if (isNaN(v) || isNaN(omega)) return;
+
         // Apply unicycle model
         // Use 60fps normalization to match other services
         const dt = deltaTime * 60; 

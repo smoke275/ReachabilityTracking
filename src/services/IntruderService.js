@@ -107,13 +107,16 @@ export class IntruderService {
         // Listen for external position updates (e.g. from MPPI or other controllers)
         eventBus.on('intruder:positionUpdate', (data) => {
             // Update internal state to match external changes
-            if (data.position) {
+            if (data.position && 
+                typeof data.position.x === 'number' && !isNaN(data.position.x) &&
+                typeof data.position.y === 'number' && !isNaN(data.position.y)) {
+                
                 // Only update if we have a position object
                 if (!this.position) this.position = { x: 0, y: 0 };
                 this.position.x = data.position.x;
                 this.position.y = data.position.y;
             }
-            if (typeof data.heading === 'number') {
+            if (typeof data.heading === 'number' && !isNaN(data.heading)) {
                 this.heading = data.heading;
             }
         });
