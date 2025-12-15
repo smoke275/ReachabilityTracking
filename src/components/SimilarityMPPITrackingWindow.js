@@ -6,6 +6,7 @@ import { eventBus } from '../utils/EventBus.js';
 import { tensorFlowMPPIService } from '../services/TensorFlowMPPIService.js';
 import { similarityMPPITrackingService } from '../services/SimilarityMPPITrackingService.js';
 import { sdfService } from '../services/SDFService.js';
+import { VisibilNetConfig } from '../config/VisibilNetConfig.js';
 
 export class SimilarityMPPITrackingWindow extends HTMLElement {
     constructor() {
@@ -15,7 +16,7 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         this.dragOffset = { x: 0, y: 0 };
         this.position = { x: window.innerWidth - 450, y: 120 };
         this.isTracking = false;
-        this.activeService = tensorFlowMPPIService; // Default
+        this.activeService = similarityMPPITrackingService; // Default to JS variant
     }
 
     connectedCallback() {
@@ -60,6 +61,28 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             console.log('Toggle visualization:', e.target.checked);
             eventBus.emit('similarityMPPITracking:toggleVisualization', e.target.checked);
         });
+
+        // Backend selector
+        const backendSelector = this.shadowRoot.querySelector('#backendSelector');
+        backendSelector?.addEventListener('change', (e) => {
+            const backend = e.target.value;
+            if (backend === 'tensorflow') {
+                this.activeService = tensorFlowMPPIService;
+            } else {
+                this.activeService = similarityMPPITrackingService;
+            }
+            
+            // Save to config
+            const config = this.getConfig();
+            config.backend = backend;
+            this.saveConfig(config);
+            
+            console.log(`Switched backend to: ${backend}`);
+        });
+
+        // Load Model Button
+        const loadModelBtn = this.shadowRoot.querySelector('#loadModelBtn');
+        loadModelBtn?.addEventListener('click', () => this.loadModel());
 
         // All parameter sliders
         this.attachSlider('vMaxSlider', 'vMaxValue', (v) => parseFloat(v).toFixed(1));
@@ -131,8 +154,144 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
         });
     }
 
+    startDragging(e) {
+        if (e.target.closest('.close-btn') || e.target.closest('.minimize-btn')) return;
+        this.isDragging = true;
+        const container = this.shadowRoot.querySelector('.window-container');
+        const rect = container.getBoundingClientRect();
+        this.dragOffset.x = e.clientX - rect.left;
+        this.dragOffset.y = e.clientY - rect.top;
+        container.style.cursor = 'grabbing';
+    }
+
+    drag(e) {
+        if (!this.isDragging) return;
+        this.position.x = e.clientX - this.dragOffset.x;
+        this.position.y = e.clientY - this.dragOffset.y;
+        
+        // Boundary checks
+        const container = this.shadowRoot.querySelector('.window-container');
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            this.position.x = Math.max(0, Math.min(window.innerWidth - rect.width, this.position.x));
+            this.position.y = Math.max(0, Math.min(window.innerHeight - rect.height, this.position.y));
+        }
+        
+        this.updatePosition();
+    }
+
+    stopDragging() {
+        if (!this.isDragging) return;
+        this.isDragging = false;
+        this.shadowRoot.querySelector('.window-container').style.cursor = 'default';
+    }
+
+    updatePosition() {
+        const container = this.shadowRoot.querySelector('.window-container');
+        if (container) {
+            container.style.left = `${this.position.x}px`;
+            container.style.top = `${this.position.y}px`;
+        }
+    }
+
+    close() {
+        this.remove();
+        eventBus.emit('similarityMPPITracking:windowClosed');
+    }
+
+    minimize() {
+        const content = this.shadowRoot.querySelector('.window-content');
+        const icon = this.shadowRoot.querySelector('.minimize-btn md-icon');
+        if (content.style.display === 'none') {
+            content.style.display = 'block';
+            icon.textContent = 'remove';
+        } else {
+            content.style.display = 'none';
+            icon.textContent = 'add';
+        }
+    }
+
+    show() {
+        this.setAttribute('visible', '');
+        this.updatePosition();
+    }
+
     syncWithEvader() {
         eventBus.emit('evader:requestParams');
+    }
+
+    startTracking() {
+        if (this.isTracking) return;
+        
+        // Get current states
+        eventBus.emit('realTimeTracking:requestStates', (states) => {
+            if (states && states.pursuerState && states.evaderState) {
+                this.activeService.start(states.pursuerState, states.evaderState);
+                this.isTracking = true;
+                this.updateDisplay();
+            } else {
+                this.showError('Please place both Pursuer and Evader first');
+            }
+        });
+    }
+
+    stopTracking() {
+        if (!this.isTracking) return;
+        this.activeService.stop();
+        this.isTracking = false;
+        this.updateDisplay();
+    }
+
+    updateDisplay() {
+        const startBtn = this.shadowRoot.querySelector('#startTracking');
+        const stopBtn = this.shadowRoot.querySelector('#stopTracking');
+        const status = this.shadowRoot.querySelector('#trackingStatus');
+        
+        if (startBtn && stopBtn && status) {
+            if (this.isTracking) {
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                status.textContent = 'Tracking Active';
+                status.className = 'status-message success';
+            } else {
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                status.textContent = 'Ready to start tracking';
+                status.className = 'status-message';
+            }
+        }
+    }
+
+    updateTracking(data) {
+        if (!this.isTracking) return;
+        
+        // Update stats if available
+        if (data.stats) {
+            this.showStats(data.stats);
+        }
+    }
+
+    showStats(stats) {
+        const status = this.shadowRoot.querySelector('#trackingStatus');
+        if (status && stats) {
+            status.textContent = `Tracking: Dist ${stats.distance.toFixed(1)}px`;
+        }
+    }
+
+    showError(message) {
+        const status = this.shadowRoot.querySelector('#trackingStatus');
+        if (status) {
+            status.textContent = message;
+            status.className = 'status-message error';
+            
+            // Reset after 3 seconds
+            setTimeout(() => {
+                if (!this.isTracking) {
+                    status.textContent = 'Ready to start tracking';
+                    status.className = 'status-message';
+                }
+            }, 3000);
+        }
     }
 
     applyEvaderParams(params) {
@@ -193,20 +352,37 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
             vMax: parseFloat(this.shadowRoot.querySelector('#vMaxSlider')?.value || 1.0),
             vMin: parseFloat(this.shadowRoot.querySelector('#vMinSlider')?.value || 0),
             omegaMax: parseFloat(this.shadowRoot.querySelector('#omegaMaxSlider')?.value || 0.15),
-            mppiSamples: parseInt(this.shadowRoot.querySelector('#mppiSamplesSlider')?.value || 500),
+            mppiSamples: parseInt(this.shadowRoot.querySelector('#mppiSamplesSlider')?.value || 200),
             mppiHorizon: parseFloat(this.shadowRoot.querySelector('#mppiHorizonSlider')?.value || 2.0),
             mppiLambda: parseFloat(this.shadowRoot.querySelector('#mppiLambdaSlider')?.value || 0.5),
             mppiSigma: parseFloat(this.shadowRoot.querySelector('#mppiSigmaSlider')?.value || 0.1),
             controlFreq: parseInt(this.shadowRoot.querySelector('#controlFreqSlider')?.value || 30),
             collisionWeight: parseFloat(this.shadowRoot.querySelector('#collisionWeightSlider')?.value || 10000),
             safeDistance: parseFloat(this.shadowRoot.querySelector('#safeDistanceSlider')?.value || 20),
+            backend: this.shadowRoot.querySelector('#backendSelector')?.value || 'tensorflow'
         };
 
         tensorFlowMPPIService.configure(config);
         similarityMPPITrackingService.configure(config);
         
         // Save to local storage
-        localStorage.setItem('mppi_config', JSON.stringify(config));
+        this.saveConfig(config);
+    }
+    
+    getConfig() {
+        return {
+            vMax: parseFloat(this.shadowRoot.querySelector('#vMaxSlider')?.value || 1.0),
+            vMin: parseFloat(this.shadowRoot.querySelector('#vMinSlider')?.value || 0),
+            omegaMax: parseFloat(this.shadowRoot.querySelector('#omegaMaxSlider')?.value || 0.15),
+            mppiSamples: parseInt(this.shadowRoot.querySelector('#mppiSamplesSlider')?.value || 200),
+            mppiHorizon: parseFloat(this.shadowRoot.querySelector('#mppiHorizonSlider')?.value || 2.0),
+            mppiLambda: parseFloat(this.shadowRoot.querySelector('#mppiLambdaSlider')?.value || 0.5),
+            mppiSigma: parseFloat(this.shadowRoot.querySelector('#mppiSigmaSlider')?.value || 0.1),
+            controlFreq: parseInt(this.shadowRoot.querySelector('#controlFreqSlider')?.value || 30),
+            collisionWeight: parseFloat(this.shadowRoot.querySelector('#collisionWeightSlider')?.value || 10000),
+            safeDistance: parseFloat(this.shadowRoot.querySelector('#safeDistanceSlider')?.value || 20),
+            backend: this.shadowRoot.querySelector('#backendSelector')?.value || 'tensorflow'
+        };
     }
     
     saveConfig(config) {
@@ -215,9 +391,11 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
     
     loadConfig() {
         const saved = localStorage.getItem('mppiTrackingConfig');
+        let config = {};
+        
         if (saved) {
             try {
-                const config = JSON.parse(saved);
+                config = JSON.parse(saved);
                 
                 // Helper to set slider and display
                 const setSlider = (id, val, displayId, fixed) => {
@@ -232,7 +410,9 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 setSlider('vMaxSlider', config.vMax, 'vMaxValue', 1);
                 setSlider('vMinSlider', config.vMin, 'vMinValue', 1);
                 setSlider('omegaMaxSlider', config.omegaMax, 'omegaMaxValue', 1);
-                setSlider('mppiSamplesSlider', config.mppiSamples, 'mppiSamplesValue', 0);
+                // Ensure samples are reasonable if switching from GPU config
+                const samples = config.mppiSamples > 5000 ? 200 : config.mppiSamples;
+                setSlider('mppiSamplesSlider', samples, 'mppiSamplesValue', 0);
                 setSlider('mppiHorizonSlider', config.mppiHorizon, 'mppiHorizonValue', 1);
                 setSlider('mppiLambdaSlider', config.mppiLambda, 'mppiLambdaValue', 2);
                 setSlider('mppiSigmaSlider', config.mppiSigma, 'mppiSigmaValue', 2);
@@ -247,147 +427,88 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                 console.error('Failed to load MPPI config', e);
             }
         }
-    }
 
-    startTracking() {
-        console.log('Start Tracking clicked');
-        
-        eventBus.emit('realTimeTracking:requestStates', (states) => {
-            if (!states.pursuerState || !states.evaderState) {
-                this.showError('Please place both Pursuer and Evader first using the Agents window');
-                return;
-            }
-
-            this.updateConfig();
+        // Set backend selector based on saved config or default from file
+        const backendSelector = this.shadowRoot.querySelector('#backendSelector');
+        if (backendSelector) {
+            const defaultBackend = VisibilNetConfig.defaultTrackingBackend || 'tensorflow';
+            const backend = config.backend || defaultBackend;
+            backendSelector.value = backend;
             
-            // Determine backend
-            const backend = this.shadowRoot.querySelector('#backendSelector')?.value || 'tensorflow';
-            console.log(`Starting tracking with backend: ${backend}`);
-            
+            // Update active service based on selection
             if (backend === 'tensorflow') {
                 this.activeService = tensorFlowMPPIService;
             } else {
                 this.activeService = similarityMPPITrackingService;
             }
+        }
+    }
+
+    async loadModel() {
+        try {
+            // Create file input that accepts multiple files
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,.bin';
+            input.multiple = true;
             
-            this.activeService.start(states.pursuerState, states.evaderState);
-        });
-    }
+            input.onchange = async (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length < 2) {
+                    alert('Please select at least 2 files: model.json and weights file (.bin)');
+                    return;
+                }
+                
+                try {
+                    // Find each file by name pattern
+                    const modelFile = files.find(f => f.name.endsWith('.json') && !f.name.includes('params'));
+                    const weightsFile = files.find(f => f.name.endsWith('.bin'));
+                    const paramsFile = files.find(f => f.name.includes('params') || (f.name.endsWith('.json') && f.name.includes('model')));
+                    
+                    if (!modelFile || !weightsFile) {
+                        alert(`Missing required files!\nFound: ${files.map(f => f.name).join(', ')}\n\nNeed:\n- model.json\n- weights.bin (or .bin file)`);
+                        return;
+                    }
+                    
+                    const statusDiv = this.shadowRoot.querySelector('#modelStatus');
+                    if (statusDiv) statusDiv.textContent = 'Loading model...';
+                    
+                    let normalizationParams = null;
+                    let modelNumRays = null;
 
-    stopTracking() {
-        console.log('Stop Tracking clicked');
-        // Stop both to be safe
-        tensorFlowMPPIService.stop();
-        similarityMPPITrackingService.stop();
-    }
+                    // Load normalization params if available
+                    if (paramsFile) {
+                        const paramsText = await paramsFile.text();
+                        const params = JSON.parse(paramsText);
+                        normalizationParams = params.normalizationParams;
+                        modelNumRays = params.numRays;
+                    }
+                    
+                    // Load model
+                    const tf = await import('@tensorflow/tfjs');
+                    const model = await tf.loadLayersModel(
+                        tf.io.browserFiles([modelFile, weightsFile])
+                    );
+                    
+                    // Pass model to service
+                    similarityMPPITrackingService.setModel(model, normalizationParams);
 
-    updateDisplay() {
-        const startBtn = this.shadowRoot.querySelector('#startTracking');
-        const stopBtn = this.shadowRoot.querySelector('#stopTracking');
-
-        if (startBtn && stopBtn) {
-            if (this.isTracking) {
-                startBtn.disabled = true;
-                stopBtn.disabled = false;
-            } else {
-                startBtn.disabled = false;
-                stopBtn.disabled = true;
-            }
+                    if (statusDiv) statusDiv.textContent = `Model loaded! Rays: ${modelNumRays || 'Unknown'}`;
+                    
+                } catch (error) {
+                    console.error('Error loading model:', error);
+                    const statusDiv = this.shadowRoot.querySelector('#modelStatus');
+                    if (statusDiv) statusDiv.textContent = 'Error loading model';
+                    alert('Error loading model: ' + error.message);
+                }
+            };
+            
+            input.click();
+            
+        } catch (error) {
+            console.error('Error in loadModel:', error);
+            alert('Error loading model: ' + error.message);
         }
-    }
-
-    updateTracking(data) {
-        const statusEl = this.shadowRoot.querySelector('#trackingStatus');
-        if (statusEl) {
-            statusEl.textContent = `✓ Tracking active (TFJS)`;
-            statusEl.className = 'status-message active';
-        }
-    }
-
-    showStats(stats) {
-        const statusEl = this.shadowRoot.querySelector('#trackingStatus');
-        if (statusEl) {
-            statusEl.textContent = `Tracking stopped`;
-            statusEl.className = 'status-message';
-        }
-    }
-
-    showError(message) {
-        const statusEl = this.shadowRoot.querySelector('#trackingStatus');
-        if (statusEl) {
-            statusEl.textContent = `Error: ${message}`;
-            statusEl.className = 'status-message error';
-        }
-    }
-
-    startDragging(e) {
-        if (e.target.closest('.control-btn')) return;
-        
-        this.isDragging = true;
-        const container = this.shadowRoot.querySelector('.window-container');
-        const rect = container.getBoundingClientRect();
-        this.dragOffset.x = e.clientX - rect.left;
-        this.dragOffset.y = e.clientY - rect.top;
-        
-        container.style.cursor = 'grabbing';
-    }
-
-    drag(e) {
-        if (!this.isDragging) return;
-
-        this.position.x = e.clientX - this.dragOffset.x;
-        this.position.y = e.clientY - this.dragOffset.y;
-
-        const container = this.shadowRoot.querySelector('.window-container');
-        if (container) {
-            const rect = container.getBoundingClientRect();
-            this.position.x = Math.max(0, Math.min(window.innerWidth - rect.width, this.position.x));
-            this.position.y = Math.max(0, Math.min(window.innerHeight - rect.height, this.position.y));
-        }
-
-        this.updatePosition();
-    }
-
-    stopDragging() {
-        if (!this.isDragging) return;
-        this.isDragging = false;
-        const container = this.shadowRoot.querySelector('.window-container');
-        if (container) {
-            container.style.cursor = 'default';
-        }
-    }
-
-    updatePosition() {
-        const container = this.shadowRoot.querySelector('.window-container');
-        if (container) {
-            container.style.left = `${this.position.x}px`;
-            container.style.top = `${this.position.y}px`;
-        }
-    }
-
-    minimize() {
-        const content = this.shadowRoot.querySelector('.window-content');
-        const container = this.shadowRoot.querySelector('.window-container');
-        const minimizeBtn = this.shadowRoot.querySelector('.minimize-btn md-icon');
-        
-        if (content.style.display === 'none') {
-            content.style.display = 'block';
-            container.style.height = 'auto';
-            if (minimizeBtn) minimizeBtn.textContent = 'remove';
-        } else {
-            content.style.display = 'none';
-            container.style.height = 'auto';
-            if (minimizeBtn) minimizeBtn.textContent = 'add';
-        }
-    }
-
-    close() {
-        this.removeAttribute('visible');
-        eventBus.emit('similarityMPPITracking:windowClosed');
-    }
-
-    show() {
-        this.setAttribute('visible', '');
     }
 
     render() {
@@ -672,8 +793,8 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                             <span id="sdfStatus" style="font-size: 11px; padding: 2px 8px; border-radius: 12px; background: #eee; color: #666; font-weight: normal; text-transform: none;">SDF: Init</span>
                         </div>
                         <div class="slider-row">
-                            <div class="slider-label">Samples (K): <strong><span id="mppiSamplesValue">2000</span></strong></div>
-                            <md-slider id="mppiSamplesSlider" min="100" max="10000" step="100" value="2000" labeled></md-slider>
+                            <div class="slider-label">Samples (K): <strong><span id="mppiSamplesValue">200</span></strong></div>
+                            <md-slider id="mppiSamplesSlider" min="50" max="5000" step="50" value="200" labeled></md-slider>
                         </div>
                         <div class="slider-row">
                             <div class="slider-label">Time Horizon (T): <strong><span id="mppiHorizonValue">2.0</span>s</strong></div>
@@ -733,6 +854,17 @@ export class SimilarityMPPITrackingWindow extends HTMLElement {
                                 Show Trajectories
                             </label>
                         </div>
+                    </div>
+
+                    <md-divider></md-divider>
+
+                    <div class="section">
+                        <div class="section-title">Model</div>
+                        <md-outlined-button id="loadModelBtn" class="tool-button">
+                            <md-icon slot="icon">upload_file</md-icon>
+                            Load VisibilNet Model
+                        </md-outlined-button>
+                        <div id="modelStatus" style="font-size: 0.75rem; margin-top: 8px; color: #666;">No model loaded</div>
                     </div>
 
                     <md-divider></md-divider>

@@ -32,10 +32,203 @@ export class SimilarityMPPITrackingService {
         this.lastControlTime = 0;
         this.currentControl = { v: 0, omega: 0 };
         this.currentTrajectories = [];
+
+        // Model state
+        this.model = null;
+        this.normalizationParams = null;
+        this.modelNumRays = 36;
     }
 
-    configure(config) {
-        this.config = { ...this.config, ...config };
+    setModel(model, normalizationParams) {
+        this.model = model;
+        this.normalizationParams = normalizationParams;
+        if (normalizationParams && normalizationParams.numRays) {
+            this.modelNumRays = normalizationParams.numRays;
+        }
+        console.log('SimilarityMPPITrackingService: Model set', { 
+            hasModel: !!model, 
+            hasParams: !!normalizationParams,
+            rays: this.modelNumRays 
+        });
+    }
+
+    // Fourier feature encoding
+    fourierEncode(x, y, numFrequencies = 6) {
+        const features = [];
+        for (let i = 0; i < numFrequencies; i++) {
+            const freq = Math.pow(2, i) * Math.PI;
+            features.push(Math.sin(freq * x));
+            features.push(Math.cos(freq * x));
+            features.push(Math.sin(freq * y));
+            features.push(Math.cos(freq * y));
+        }
+        return features;
+    }
+
+    async predictVisibility(observer) {
+        if (!this.model || !this.normalizationParams) return null;
+        
+        const tf = await import('@tensorflow/tfjs');
+        
+        const { xMin, xMax, yMin, yMax } = this.normalizationParams;
+        
+        // Normalize
+        let xNorm = 2 * (observer.x - xMin) / (xMax - xMin || 1) - 1;
+        let yNorm = 2 * (observer.y - yMin) / (yMax - yMin || 1) - 1;
+        
+        // Clamp
+        xNorm = Math.max(-1, Math.min(1, xNorm));
+        yNorm = Math.max(-1, Math.min(1, yNorm));
+        
+        // Fourier encode
+        const features = this.fourierEncode(xNorm, yNorm, 6);
+        
+        // Predict
+        const distances = tf.tidy(() => {
+            const inputTensor = tf.tensor2d([features]);
+            const prediction = this.model.predict(inputTensor);
+            return prediction.dataSync();
+        });
+        
+        // Denormalize distances
+        const { dMin, dMax } = this.normalizationParams;
+        const denormalizedDistances = Array.from(distances).map(d => 
+            d * (dMax - dMin) + dMin
+        );
+        
+        return this.reconstructPolygon(observer, denormalizedDistances);
+    }
+
+    async predictVisibilityBatch(observers) {
+        if (!this.model || !this.normalizationParams || observers.length === 0) return [];
+        
+        const tf = await import('@tensorflow/tfjs');
+        const { xMin, xMax, yMin, yMax, dMin, dMax } = this.normalizationParams;
+        
+        // Prepare batch input
+        const batchFeatures = observers.map(obs => {
+            // Normalize
+            let xNorm = 2 * (obs.x - xMin) / (xMax - xMin || 1) - 1;
+            let yNorm = 2 * (obs.y - yMin) / (yMax - yMin || 1) - 1;
+            
+            // Clamp
+            xNorm = Math.max(-1, Math.min(1, xNorm));
+            yNorm = Math.max(-1, Math.min(1, yNorm));
+            
+            // Fourier encode
+            return this.fourierEncode(xNorm, yNorm, 6);
+        });
+        
+        // Predict batch
+        const predictionTensor = tf.tidy(() => {
+            const inputTensor = tf.tensor2d(batchFeatures);
+            return this.model.predict(inputTensor);
+        });
+        
+        const allDistances = await predictionTensor.data();
+        predictionTensor.dispose();
+        
+        // Reconstruct polygons
+        const polygons = [];
+        const numRays = this.modelNumRays;
+        
+        for (let i = 0; i < observers.length; i++) {
+            const startIdx = i * numRays;
+            const distances = allDistances.slice(startIdx, startIdx + numRays);
+            
+            // Denormalize
+            const denormalizedDistances = Array.from(distances).map(d => 
+                d * (dMax - dMin) + dMin
+            );
+            
+            polygons.push(this.reconstructPolygon(observers[i], denormalizedDistances));
+        }
+        
+        return polygons;
+    }
+
+    reconstructPolygon(observer, distances) {
+        const vertices = [];
+        const numRays = distances.length;
+        
+        for (let i = 0; i < numRays; i++) {
+            const angle = i * (2 * Math.PI / numRays);
+            const dist = distances[i];
+            
+            vertices.push({
+                x: observer.x + dist * Math.cos(angle),
+                y: observer.y + dist * Math.sin(angle)
+            });
+        }
+        
+        return vertices;
+    }
+
+    isPointInPolygon(point, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+            const xi = polygon[i].x, yi = polygon[i].y;
+            const xj = polygon[j].x, yj = polygon[j].y;
+            
+            const intersect = ((yi > point.y) !== (yj > point.y))
+                && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    calculateLocalMcSimilarity(poly1, poly2, center2) {
+        if (!poly1 || !poly2 || poly2.length < 3) return 0;
+
+        // 1. Calculate total area of poly2 (sum of triangles from center)
+        let totalArea = 0;
+        const cdf = [];
+        
+        for (let i = 0; i < poly2.length; i++) {
+            const p1 = poly2[i];
+            const p2 = poly2[(i + 1) % poly2.length];
+            
+            const area = 0.5 * Math.abs(
+                p1.x * (p2.y - center2.y) + 
+                p2.x * (center2.y - p1.y) + 
+                center2.x * (p1.y - p2.y)
+            );
+            
+            totalArea += area;
+            cdf.push(totalArea);
+        }
+        
+        if (totalArea === 0) return 0;
+
+        // 2. Sample points
+        let pointsInA = 0;
+        const numSamples = 50; // Reduced samples for performance
+        
+        for (let k = 0; k < numSamples; k++) {
+            const r = Math.random() * totalArea;
+            let triIndex = cdf.findIndex(v => v >= r);
+            if (triIndex === -1) triIndex = cdf.length - 1;
+            
+            const p1 = poly2[triIndex];
+            const p2 = poly2[(triIndex + 1) % poly2.length];
+            
+            const r1 = Math.random();
+            const r2 = Math.random();
+            
+            let sqrtR1 = Math.sqrt(r1);
+            let u = 1 - sqrtR1;
+            let v = sqrtR1 * (1 - r2);
+            let w = sqrtR1 * r2;
+            
+            const px = u * center2.x + v * p1.x + w * p2.x;
+            const py = u * center2.y + v * p1.y + w * p2.y;
+            
+            if (this.isPointInPolygon({x: px, y: py}, poly1)) {
+                pointsInA++;
+            }
+        }
+        
+        return pointsInA / numSamples;
     }
 
     start(pursuerState, evaderState) {
@@ -48,6 +241,7 @@ export class SimilarityMPPITrackingService {
         this.lastUpdateTime = performance.now();
         this.lastControlTime = 0;
         this.currentControl = { v: 0, omega: 0 };
+        this.currentTrajectories = [];
         
         console.log('Similarity MPPI Tracking started');
         eventBus.emit('similarityMPPITracking:started');
@@ -79,7 +273,7 @@ export class SimilarityMPPITrackingService {
         }
     }
 
-    animate() {
+    async animate() {
         if (!this.isTracking) return;
 
         const currentTime = performance.now();
@@ -95,18 +289,24 @@ export class SimilarityMPPITrackingService {
 
         // 2. Run MPPI to get control (at specified frequency)
         const controlPeriod = 1000 / this.config.controlFreq;
-        if (currentTime - this.lastControlTime >= controlPeriod) {
-            const result = this.runMPPI();
-            this.currentControl = result.control;
-            this.currentTrajectories = result.trajectories;
-            this.lastControlTime = currentTime;
+        if (currentTime - this.lastControlTime >= controlPeriod && !this.isComputing) {
+            this.isComputing = true;
+            try {
+                const result = await this.runMPPI();
+                this.currentControl = result.control;
+                this.currentTrajectories = result.trajectories;
+                this.lastControlTime = currentTime;
+            } catch (e) {
+                console.error('MPPI Error:', e);
+            } finally {
+                this.isComputing = false;
+            }
         }
 
         // 3. Apply control to pursuer
         this.updatePursuer(this.currentControl, deltaTime);
 
         // 4. Emit update for visualization
-        // console.log(`Emitting update with ${this.currentTrajectories.length} trajectories`);
         eventBus.emit('similarityMPPITracking:update', {
             pursuerState: this.pursuerState,
             evaderState: this.evaderState,
@@ -126,7 +326,7 @@ export class SimilarityMPPITrackingService {
         this.animationFrameId = requestAnimationFrame(() => this.animate());
     }
 
-    runMPPI() {
+    async runMPPI() {
         if (!this.pursuerState || !this.pursuerState.position || !this.evaderState || !this.evaderState.position) {
             return { control: { v: 0, omega: 0 }, trajectories: [] };
         }
@@ -138,7 +338,16 @@ export class SimilarityMPPITrackingService {
         const trajectoryPoints = []; // Array of point sequences for visualization
         const costs = [];
 
+        // Pre-calculate evader polygon if model is available
+        let evaderPolygon = null;
+        if (this.model && this.normalizationParams) {
+             evaderPolygon = await this.predictVisibility(this.evaderState.position);
+        }
+
         // Generate random trajectories
+        const terminalStates = [];
+        const terminalIndices = [];
+
         for (let k = 0; k < mppiSamples; k++) {
             let simState = {
                 x: this.pursuerState.position.x,
@@ -160,20 +369,16 @@ export class SimilarityMPPITrackingService {
                 while (headingError > Math.PI) headingError -= 2 * Math.PI;
                 while (headingError < -Math.PI) headingError += 2 * Math.PI;
 
-                // SDF-aware Base Policy: Slow down near obstacles
+                // SDF-aware Base Policy
                 const distToObs = sdfService.getDistance(simState.x, simState.y);
                 
-                // If near obstacle (e.g. < 40px), reduce speed limit
-                // But keep a minimum speed (e.g. 10% of vMax) to allow escaping if stuck
                 let obstacleSpeedLimit = vMax;
                 if (distToObs < 40.0) {
                     const ratio = Math.max(0, distToObs / 40.0);
                     obstacleSpeedLimit = vMax * (0.1 + 0.9 * ratio);
                 }
                 
-                // Also slow down if we need to turn sharply (Kinematic constraint)
                 const turnSpeedLimit = vMax * Math.max(0.1, Math.cos(headingError));
-
                 const effectiveVMax = Math.min(vMax, obstacleSpeedLimit, turnSpeedLimit);
                 const baseV = Math.min(effectiveVMax, dist); 
                 const baseOmega = Math.max(-omegaMax, Math.min(omegaMax, 2.0 * headingError));
@@ -185,14 +390,12 @@ export class SimilarityMPPITrackingService {
                 let v = baseV + noiseV;
                 let omega = baseOmega + noiseOmega;
 
-                // Clamp
                 v = Math.max(this.config.vMin, Math.min(vMax, v));
                 omega = Math.max(-omegaMax, Math.min(omegaMax, omega));
 
                 controls.push({ v, omega });
 
                 // Simulate step
-                // Convert dt (seconds) to frames (assuming 60fps) for the model
                 const dtFrames = dt * 60;
                 simState.x += v * Math.cos(simState.theta) * dtFrames;
                 simState.y += v * Math.sin(simState.theta) * dtFrames;
@@ -200,30 +403,45 @@ export class SimilarityMPPITrackingService {
                 
                 points.push({x: simState.x, y: simState.y});
 
-                // Cost: Distance to evader (assume static for now)
-                const dX = simState.x - this.evaderState.position.x;
-                const dY = simState.y - this.evaderState.position.y;
-                const stepCost = Math.sqrt(dX*dX + dY*dY);
+                // Cost Calculation
+                let stepCost = 0;
+
+                // 1. Similarity Cost (Terminal or Sparse)
+                // Only calculate at the end of horizon to save performance
+                if (t === horizonSteps - 1 && evaderPolygon) {
+                     // Defer calculation to batch processing
+                     terminalStates.push({x: simState.x, y: simState.y});
+                     terminalIndices.push(k);
+                } else if (!evaderPolygon) {
+                    // Fallback to distance if model not loaded
+                    const dX = simState.x - this.evaderState.position.x;
+                    const dY = simState.y - this.evaderState.position.y;
+                    stepCost += Math.sqrt(dX*dX + dY*dY);
+                }
+
+                // 2. Collision Cost
+                if (distToObs < this.config.safeDistance) {
+                    const collisionCost = this.config.collisionWeight * (this.config.safeDistance - distToObs);
+                    stepCost += collisionCost;
+                }
                 
                 trajectoryCost += stepCost;
-
-                // Cost: Collision avoidance using SDF
-                // distToObs is already computed above for the base policy
-                if (distToObs < this.config.safeDistance) {
-                    // Exponential barrier or linear penalty
-                    // Using linear penalty for simplicity: cost increases as distance decreases
-                    // If inside (dist < 0), cost continues to increase linearly
-                    const collisionCost = this.config.collisionWeight * (this.config.safeDistance - distToObs);
-                    trajectoryCost += collisionCost;
-                } else {
-                    // Small bonus for being far from obstacles (optional, helps center in corridors)
-                    // trajectoryCost -= Math.min(100, distToObs); 
-                }
             }
             
             trajectories.push(controls);
             trajectoryPoints.push(points);
             costs.push(trajectoryCost);
+        }
+
+        // Batch process similarity costs
+        if (evaderPolygon && terminalStates.length > 0) {
+            const pursuerPolygons = await this.predictVisibilityBatch(terminalStates);
+            for (let i = 0; i < terminalStates.length; i++) {
+                const k = terminalIndices[i];
+                const similarity = this.calculateLocalMcSimilarity(evaderPolygon, pursuerPolygons[i], terminalStates[i]);
+                // Maximize similarity -> Minimize negative similarity
+                costs[k] += -similarity * 5000;
+            }
         }
 
         // Compute weights
@@ -235,21 +453,15 @@ export class SimilarityMPPITrackingService {
             return w;
         });
 
-        // console.log(`MPPI: Generated ${trajectories.length} trajectories, minCost=${minCost.toFixed(2)}`);
-
-        // Compute weighted average of first control
+        // Compute weighted average
         let avgV = 0;
         let avgOmega = 0;
 
         if (weightSum < 1e-10 || isNaN(weightSum)) {
-            // Fallback: use the best trajectory (min cost)
             const bestIdx = costs.indexOf(minCost);
             if (bestIdx !== -1) {
                 avgV = trajectories[bestIdx][0].v;
                 avgOmega = trajectories[bestIdx][0].omega;
-            } else {
-                avgV = 0;
-                avgOmega = 0;
             }
         } else {
             for (let k = 0; k < mppiSamples; k++) {
@@ -259,13 +471,8 @@ export class SimilarityMPPITrackingService {
             }
         }
         
-        if (isNaN(avgV) || isNaN(avgOmega)) {
-            console.warn('MPPI produced NaN control', { avgV, avgOmega, weightSum, minCost });
-            return { control: { v: 0, omega: 0 }, trajectories: trajectoryPoints };
-        }
-
         return { 
-            control: { v: avgV, omega: avgOmega },
+            control: { v: avgV || 0, omega: avgOmega || 0 },
             trajectories: trajectoryPoints
         };
     }
@@ -276,15 +483,12 @@ export class SimilarityMPPITrackingService {
         
         if (isNaN(v) || isNaN(omega)) return;
 
-        // Apply unicycle model
-        // Use 60fps normalization to match other services
         const dt = deltaTime * 60; 
 
         state.position.x += v * Math.cos(state.heading) * dt;
         state.position.y += v * Math.sin(state.heading) * dt;
         state.heading += omega * dt;
         
-        // Normalize heading
         state.heading = this.normalizeAngle(state.heading);
     }
 
@@ -298,6 +502,10 @@ export class SimilarityMPPITrackingService {
         const dx = p1.x - p2.x;
         const dy = p1.y - p2.y;
         return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    configure(config) {
+        this.config = { ...this.config, ...config };
     }
 }
 
